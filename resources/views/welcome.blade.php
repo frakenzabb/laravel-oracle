@@ -120,6 +120,19 @@
             <p class="text-secondary mb-0">Catat barang masuk dan keluar, pantau stok, dan lihat riwayat transaksi gudang.</p>
         </section>
 
+        @if(!empty($dbError))
+            <div class="alert alert-warning border-0 shadow-sm rounded-4 p-3 mb-3" role="alert">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="fs-5">⚠️</span>
+                    <strong>Koneksi Database Oracle Belum Terhubung</strong>
+                </div>
+                <p class="mb-1 text-danger small font-monospace">{{ $dbError }}</p>
+                <div class="small text-secondary mt-2">
+                    Silakan buka file <code>.env</code> dan lengkapi <code>DB_USERNAME</code> serta <code>DB_PASSWORD</code> untuk akun database Oracle Anda (Host: <code>{{ config('database.connections.oracle.host') }}</code>, Service: <code>{{ config('database.connections.oracle.service_name') }}</code>).
+                </div>
+            </div>
+        @endif
+
         @if(session('success'))
             <div class="alert alert-success border-0 shadow-sm rounded-4" role="alert">
                 <strong>Berhasil.</strong> {{ session('success') }}

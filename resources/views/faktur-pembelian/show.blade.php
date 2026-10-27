@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ $faktur->nomor_faktur }} - Faktur Pembelian</title>
+    <title>{{ $faktur->no_transaksi ?? $faktur->nomor_faktur }} - Faktur Pembelian</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { color: #172b4d; background: #f4f7fc; }
@@ -30,7 +30,7 @@
                 </div>
                 <div class="text-end">
                     <div class="small text-secondary">No. Transaksi</div>
-                    <div class="fw-bold">{{ $faktur->nomor_faktur }}</div>
+                    <div class="fw-bold">{{ $faktur->no_transaksi ?? $faktur->nomor_faktur }}</div>
                 </div>
             </header>
 
@@ -44,8 +44,26 @@
                     <div class="fw-semibold">{{ \Illuminate\Support\Carbon::parse($faktur->tanggal)->format('d/m/Y') }}</div>
                 </div>
                 <div class="col-sm-6 col-lg-4">
-                    <div class="small text-secondary">Pilih Rekanan</div>
-                    <div class="fw-semibold">{{ $faktur->nama_rekanan }}</div>
+                    <div class="small text-secondary">Rekanan / Supplier</div>
+                    <div class="fw-semibold">
+                        {{ $faktur->nama_rekanan }}
+                        @if(!empty($faktur->kode_rekanan))
+                            <span class="badge bg-secondary-subtle text-secondary border ms-1">{{ $faktur->kode_rekanan }}</span>
+                        @endif
+                    </div>
+                    @if(!empty($faktur->alamat_rekanan) || !empty($faktur->no_telp_rekanan))
+                        <div class="small text-muted mt-1">
+                            @if(!empty($faktur->alamat_rekanan))
+                                <span>{{ $faktur->alamat_rekanan }}</span>
+                            @endif
+                            @if(!empty($faktur->alamat_rekanan) && !empty($faktur->no_telp_rekanan))
+                                <span> &bull; </span>
+                            @endif
+                            @if(!empty($faktur->no_telp_rekanan))
+                                <span>{{ $faktur->no_telp_rekanan }}</span>
+                            @endif
+                        </div>
+                    @endif
                 </div>
                 <div class="col-sm-6 col-lg-4">
                     <div class="small text-secondary">Opr. Insert</div>

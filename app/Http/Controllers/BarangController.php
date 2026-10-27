@@ -16,11 +16,17 @@ class BarangController extends Controller
 
     public function index(): View
     {
-        $data = DB::connection('oracle')
-            ->table(self::TABLE)
-            ->orderByDesc('tanggal')
-            ->orderByDesc('id')
-            ->get();
+        $dbError = null;
+        try {
+            $data = DB::connection('oracle')
+                ->table(self::TABLE)
+                ->orderByDesc('tanggal')
+                ->orderByDesc('id')
+                ->get();
+        } catch (\Throwable $e) {
+            $data = collect();
+            $dbError = $e->getMessage();
+        }
 
         $stok = $data
             ->groupBy(fn (object $row): string => mb_strtolower(trim($row->nama_barang)))
@@ -49,7 +55,7 @@ class BarangController extends Controller
             'total_keluar' => $data->where('jenis_transaksi', 'keluar')->sum('jumlah'),
         ];
 
-        return view('welcome', compact('data', 'stok', 'ringkasan'));
+        return view('welcome', compact('data', 'stok', 'ringkasan', 'dbError'));
     }
 
     public function store(Request $request): RedirectResponse

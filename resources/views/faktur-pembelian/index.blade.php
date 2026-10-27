@@ -32,6 +32,19 @@
             <a href="{{ route('barang.index') }}" class="btn btn-outline-secondary">Kembali ke gudang</a>
         </header>
 
+        @if(!empty($dbError))
+            <div class="alert alert-warning border-0 shadow-sm rounded-3 p-3 mb-3" role="alert">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="fs-5">⚠️</span>
+                    <strong>Koneksi Database Oracle Belum Terhubung</strong>
+                </div>
+                <p class="mb-1 text-danger small font-monospace">{{ $dbError }}</p>
+                <div class="small text-secondary mt-2">
+                    Silakan buka file <code>.env</code> dan lengkapi <code>DB_USERNAME</code> serta <code>DB_PASSWORD</code> untuk akun database Oracle Anda.
+                </div>
+            </div>
+        @endif
+
         @if(session('success'))
             <div class="alert alert-success" role="alert">{{ session('success') }}</div>
         @endif
@@ -76,7 +89,12 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small fw-semibold" for="nama_rekanan">Pilih Rekanan <span class="text-danger">*</span></label>
-                        <input id="nama_rekanan" name="nama_rekanan" class="form-control" maxlength="150" placeholder="Nama pemasok / rekanan" value="{{ old('nama_rekanan') }}" required>
+                        <input id="nama_rekanan" name="nama_rekanan" list="rekananList" class="form-control" maxlength="150" placeholder="Pilih atau ketik rekanan" value="{{ old('nama_rekanan') }}" required autocomplete="off">
+                        <datalist id="rekananList">
+                            @foreach($rekananList ?? [] as $rekanan)
+                                <option value="{{ $rekanan->nama_rekanan }}">{{ $rekanan->kode_rekanan }} — {{ $rekanan->nama_rekanan }}</option>
+                            @endforeach
+                        </datalist>
                     </div>
                     <div class="col-12">
                         <label class="form-label small fw-semibold" for="keterangan">Keterangan</label>
@@ -88,7 +106,19 @@
             <section class="surface overflow-hidden mb-4">
                 <div class="section-title">Detail Barang</div>
                 <div class="p-3 p-md-4">
-                    <p class="small text-secondary mb-3">Isi kode barang, nama barang, satuan, dan jumlah. Barang yang disimpan akan otomatis dicatat sebagai barang masuk.</p>
+                    <p class="small text-secondary mb-3">Pilih atau isi kode barang, nama barang, satuan, dan jumlah. Barang yang disimpan akan otomatis dicatat sebagai barang masuk.</p>
+                    
+                    <datalist id="itemNamaList">
+                        @foreach($itemList ?? [] as $it)
+                            <option value="{{ $it->nama_barang }}">{{ $it->kode_barang }} — {{ $it->nama_barang }} ({{ $it->satuan }})</option>
+                        @endforeach
+                    </datalist>
+                    <datalist id="itemKodeList">
+                        @foreach($itemList ?? [] as $it)
+                            <option value="{{ $it->kode_barang }}">{{ $it->kode_barang }} — {{ $it->nama_barang }} ({{ $it->satuan }})</option>
+                        @endforeach
+                    </datalist>
+
                     <div class="table-responsive">
                         <table class="table table-bordered align-middle mb-3">
                             <thead>
@@ -108,9 +138,9 @@
                                 @foreach($formItems as $index => $item)
                                     <tr class="item-row">
                                         <td class="row-number">{{ $loop->iteration }}</td>
-                                        <td><input name="items[{{ $index }}][kode_barang]" class="form-control" maxlength="50" placeholder="Kode barang" value="{{ $item['kode_barang'] ?? '' }}"></td>
-                                        <td><input name="items[{{ $index }}][nama_barang]" class="form-control" maxlength="150" placeholder="Nama barang" value="{{ $item['nama_barang'] ?? '' }}" required></td>
-                                        <td><input name="items[{{ $index }}][satuan]" class="form-control" maxlength="30" placeholder="Satuan" value="{{ $item['satuan'] ?? '' }}" required></td>
+                                        <td><input name="items[{{ $index }}][kode_barang]" list="itemKodeList" class="form-control item-kode" maxlength="50" placeholder="Kode barang" value="{{ $item['kode_barang'] ?? '' }}" autocomplete="off"></td>
+                                        <td><input name="items[{{ $index }}][nama_barang]" list="itemNamaList" class="form-control item-nama" maxlength="150" placeholder="Nama barang" value="{{ $item['nama_barang'] ?? '' }}" required autocomplete="off"></td>
+                                        <td><input name="items[{{ $index }}][satuan]" class="form-control item-satuan" maxlength="30" placeholder="Satuan" value="{{ $item['satuan'] ?? '' }}" required></td>
                                         <td><input name="items[{{ $index }}][jumlah]" type="number" class="form-control" min="1" max="2147483647" placeholder="Jumlah" value="{{ $item['jumlah'] ?? '' }}" required></td>
                                         <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger remove-item" aria-label="Hapus barang">Hapus</button></td>
                                     </tr>
@@ -151,11 +181,11 @@
                     <tbody>
                         @forelse($faktur as $row)
                             <tr>
-                                <td class="fw-semibold">{{ $row->nomor_faktur }}</td>
+                                <td class="fw-semibold">{{ $row->no_transaksi ?? $row->nomor_faktur }}</td>
                                 <td>{{ \Illuminate\Support\Carbon::parse($row->tanggal)->format('d/m/Y') }}</td>
                                 <td>{{ $row->nama_rekanan }}</td>
                                 <td>{{ $row->keterangan ?: '—' }}</td>
-                                <td><a href="{{ route('faktur-pembelian.show', $row->id) }}" class="btn btn-sm btn-outline-primary">Lihat / Cetak</a></td>
+                                <td><a href="{{ route('faktur-pembelian.show', $row->id_transaksi ?? $row->id) }}" class="btn btn-sm btn-outline-primary">Lihat / Cetak</a></td>
                             </tr>
                         @empty
                             <tr><td colspan="5" class="text-center text-secondary py-4">Belum ada faktur pembelian.</td></tr>
@@ -169,14 +199,15 @@
     <template id="itemTemplate">
         <tr class="item-row">
             <td class="row-number"></td>
-            <td><input name="items[__INDEX__][kode_barang]" class="form-control" maxlength="50" placeholder="Kode barang"></td>
-            <td><input name="items[__INDEX__][nama_barang]" class="form-control" maxlength="150" placeholder="Nama barang" required></td>
-            <td><input name="items[__INDEX__][satuan]" class="form-control" maxlength="30" placeholder="Satuan" required></td>
+            <td><input name="items[__INDEX__][kode_barang]" list="itemKodeList" class="form-control item-kode" maxlength="50" placeholder="Kode barang" autocomplete="off"></td>
+            <td><input name="items[__INDEX__][nama_barang]" list="itemNamaList" class="form-control item-nama" maxlength="150" placeholder="Nama barang" required autocomplete="off"></td>
+            <td><input name="items[__INDEX__][satuan]" class="form-control item-satuan" maxlength="30" placeholder="Satuan" required></td>
             <td><input name="items[__INDEX__][jumlah]" type="number" class="form-control" min="1" max="2147483647" placeholder="Jumlah" required></td>
             <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger remove-item" aria-label="Hapus barang">Hapus</button></td>
         </tr>
     </template>
     <script>
+        const masterItems = @json($itemList ?? []);
         const itemsBody = document.getElementById('itemsBody');
         const itemTemplate = document.getElementById('itemTemplate');
         let nextItemIndex = itemsBody.querySelectorAll('.item-row').length;
@@ -186,6 +217,60 @@
                 cell.textContent = index + 1;
             });
         }
+
+        function syncByKode(row, kode) {
+            if (!kode || !masterItems.length) return;
+            const match = masterItems.find(it => (it.kode_barang || '').toLowerCase() === kode.trim().toLowerCase());
+            if (match) {
+                const namaInput = row.querySelector('.item-nama');
+                const satuanInput = row.querySelector('.item-satuan');
+                if (namaInput && (!namaInput.value || namaInput.value.trim() === '')) {
+                    namaInput.value = match.nama_barang || '';
+                }
+                if (satuanInput && match.satuan) {
+                    satuanInput.value = match.satuan;
+                }
+            }
+        }
+
+        function syncByNama(row, nama) {
+            if (!nama || !masterItems.length) return;
+            const match = masterItems.find(it => (it.nama_barang || '').toLowerCase() === nama.trim().toLowerCase());
+            if (match) {
+                const kodeInput = row.querySelector('.item-kode');
+                const satuanInput = row.querySelector('.item-satuan');
+                if (kodeInput && (!kodeInput.value || kodeInput.value.trim() === '')) {
+                    kodeInput.value = match.kode_barang || '';
+                }
+                if (satuanInput && match.satuan) {
+                    satuanInput.value = match.satuan;
+                }
+            }
+        }
+
+        itemsBody.addEventListener('change', (event) => {
+            const target = event.target;
+            const row = target.closest('.item-row');
+            if (!row) return;
+
+            if (target.classList.contains('item-kode')) {
+                syncByKode(row, target.value);
+            } else if (target.classList.contains('item-nama')) {
+                syncByNama(row, target.value);
+            }
+        });
+
+        itemsBody.addEventListener('input', (event) => {
+            const target = event.target;
+            const row = target.closest('.item-row');
+            if (!row) return;
+
+            if (target.classList.contains('item-kode')) {
+                syncByKode(row, target.value);
+            } else if (target.classList.contains('item-nama')) {
+                syncByNama(row, target.value);
+            }
+        });
 
         document.getElementById('addItem').addEventListener('click', () => {
             const row = itemTemplate.content.cloneNode(true);
