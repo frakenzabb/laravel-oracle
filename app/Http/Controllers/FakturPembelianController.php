@@ -52,7 +52,7 @@ class FakturPembelianController extends Controller
                 $itemList = $connection->table('m_item')
                     ->leftJoin('m_satuan', 'm_item.id_satuan', '=', 'm_satuan.id')
                     ->select([
-                        'm_item.id',
+                        'm_item.id_barang as id',
                         'm_item.kode_barang',
                         'm_item.nama_barang',
                         'm_item.id_satuan',
@@ -216,7 +216,7 @@ class FakturPembelianController extends Controller
         abort_if($faktur === null, 404);
 
         $items = $connection->table('gd_terima_beli_d')
-            ->leftJoin('m_item', 'gd_terima_beli_d.id_barang', '=', 'm_item.id')
+            ->leftJoin('m_item', 'gd_terima_beli_d.id_barang', '=', 'm_item.id_barang')
             ->leftJoin('m_satuan', 'gd_terima_beli_d.id_satuan', '=', 'm_satuan.id')
             ->select([
                 'gd_terima_beli_d.id_detail as id',
@@ -337,7 +337,7 @@ class FakturPembelianController extends Controller
                 : $this->resolveSatuanId($connection, $satuan);
 
             return [
-                'id_barang' => (int) $itemRow->id,
+                'id_barang' => (int) $itemRow->id_barang,
                 'id_satuan' => $idSatuan,
             ];
         }
@@ -349,7 +349,7 @@ class FakturPembelianController extends Controller
         )->id;
 
         $connection->table('m_item')->insert([
-            'id' => $id,
+            'id_barang' => $id,
             'kode_barang' => ! empty($cleanKode) ? $cleanKode : 'BRG'.str_pad((string) $id, 3, '0', STR_PAD_LEFT),
             'nama_barang' => $cleanNama,
             'id_satuan' => $idSatuan,
@@ -364,4 +364,3 @@ class FakturPembelianController extends Controller
         ];
     }
 }
-

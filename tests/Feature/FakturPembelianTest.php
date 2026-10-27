@@ -110,7 +110,7 @@ class FakturPembelianTest extends TestCase
         $satuanQuery->shouldReceive('first')->once()->andReturn((object) ['id' => 2]);
 
         $itemQuery->shouldReceive('whereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $itemQuery->shouldReceive('first')->once()->andReturn((object) ['id' => 2]);
+        $itemQuery->shouldReceive('first')->once()->andReturn((object) ['id_barang' => 2]);
 
         // Header insert into gd_terima_beli_m
         $headerQuery->shouldReceive('insert')->once()->with(Mockery::on(
@@ -220,8 +220,8 @@ class FakturPembelianTest extends TestCase
 
         $itemQuery->shouldReceive('whereRaw')->twice()->withAnyArgs()->andReturnSelf();
         $itemQuery->shouldReceive('first')->twice()->andReturn(
-            (object) ['id' => 2],
-            (object) ['id' => 3]
+            (object) ['id_barang' => 2],
+            (object) ['id_barang' => 3]
         );
 
         $headerQuery->shouldReceive('insert')->once()->with(Mockery::on(
@@ -323,7 +323,7 @@ class FakturPembelianTest extends TestCase
         ]);
 
         $itemsQuery->shouldReceive('leftJoin')->once()
-            ->with('m_item', 'gd_terima_beli_d.id_barang', '=', 'm_item.id')
+            ->with('m_item', 'gd_terima_beli_d.id_barang', '=', 'm_item.id_barang')
             ->andReturnSelf();
         $itemsQuery->shouldReceive('leftJoin')->once()
             ->with('m_satuan', 'gd_terima_beli_d.id_satuan', '=', 'm_satuan.id')
