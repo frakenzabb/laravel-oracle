@@ -3,171 +3,327 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class FakturPembelianController extends Controller
 {
-    public function index(): View
+    public function index(Request $request): View
     {
         $dbError = null;
-        $rekananList = collect();
-        $itemList = collect();
+        $purchaseOrders = collect();
+        $suppliers = collect();
+        $ringkasan = [
+            'purchase_orders' => 0,
+            'items' => 0,
+            'qty' => 0,
+            'transactions' => 0,
+            'received_items' => 0,
+            'received_qty' => 0,
+        ];
+        $tanggalAwal = $request->query('tanggal_awal', now()->startOfMonth()->format('Y-m-d'));
+        $tanggalAkhir = $request->query('tanggal_akhir', now()->format('Y-m-d'));
+
+        $request->validate([
+            'tanggal_awal' => ['nullable', 'date'],
+            'tanggal_akhir' => ['nullable', 'date', 'after_or_equal:tanggal_awal'],
+        ]);
 
         try {
             $connection = DB::connection('oracle');
-
-            $faktur = $connection
-                ->table('gd_terima_beli_m')
-                ->leftJoin('m_rekanan', 'gd_terima_beli_m.id_rekanan', '=', 'm_rekanan.id')
-                ->select([
-                    'gd_terima_beli_m.id_transaksi as id',
-                    'gd_terima_beli_m.id_transaksi',
-                    'gd_terima_beli_m.no_transaksi',
-                    'gd_terima_beli_m.no_transaksi as nomor_faktur',
-                    'gd_terima_beli_m.tgl_transaksi as tanggal',
-                    'gd_terima_beli_m.opr_insert as operator_insert',
-                    'gd_terima_beli_m.tgl_insert as tanggal_insert',
-                    'gd_terima_beli_m.keterangan',
-                    'm_rekanan.nama_rekanan',
-                    'm_rekanan.kode_rekanan',
+            $receiptSummary = $connection->table('gd_terima_beli_m as receipt')
+                ->leftJoin('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi')
+                ->whereBetween('receipt.tgl_transaksi', [
+                    Carbon::parse($tanggalAwal)->startOfDay(),
+                    Carbon::parse($tanggalAkhir)->endOfDay(),
                 ])
-                ->orderByDesc('gd_terima_beli_m.tgl_transaksi')
-                ->orderByDesc('gd_terima_beli_m.id_transaksi')
-                ->limit(20)
+                ->selectRaw('COUNT(DISTINCT receipt.id_transaksi) as transaction_count, COUNT(detail.id_detail) as item_count, NVL(SUM(detail.jumlah), 0) as received_qty')
+                ->first();
+
+            $ringkasan['transactions'] = (int) ($receiptSummary->transaction_count ?? 0);
+            $ringkasan['received_items'] = (int) ($receiptSummary->item_count ?? 0);
+            $ringkasan['received_qty'] = (float) ($receiptSummary->received_qty ?? 0);
+
+            $purchaseOrders = $connection->table('pmb_purchorder_m as po')
+                ->join('m_rekanan as r', 'po.id_rekanan', '=', 'r.id')
+                ->select([
+                    'po.id_transaksi as id',
+                    'po.no_transaksi',
+                    'po.tgl_transaksi as tanggal',
+                    'po.status',
+                    'po.id_rekanan',
+                    'r.nama_rekanan',
+                    'r.kode_rekanan',
+                ])
+                ->whereExists(function ($query): void {
+                    $query->selectRaw('1')
+                        ->from('pmb_purchorder_d as pod')
+                        ->whereColumn('pod.id_transaksi', 'po.id_transaksi')
+                        ->whereRaw('NVL(NULLIF(pod.jumlah2, 0), NVL(pod.jumlah, 0)) > NVL(pod.qty_bpb, 0)');
+                })
+                ->whereBetween('po.tgl_transaksi', [
+                    Carbon::parse($tanggalAwal)->startOfDay(),
+                    Carbon::parse($tanggalAkhir)->endOfDay(),
+                ])
+                ->orderByDesc('po.tgl_transaksi')
+                ->orderByDesc('po.id_transaksi')
                 ->get();
 
-            try {
-                $rekananList = $connection->table('m_rekanan')
-                    ->orderBy('nama_rekanan')
-                    ->get();
-            } catch (\Throwable) {
-                $rekananList = collect();
-            }
+            if ($purchaseOrders->isNotEmpty()) {
+                $lines = $this->getOpenPurchaseOrderLines(
+                    $connection,
+                    $purchaseOrders->pluck('id')->all()
+                );
+                $linesByOrder = $lines->groupBy('po_id');
 
-            try {
-                $itemList = $connection->table('m_item')
-                    ->leftJoin('m_satuan', 'm_item.id_satuan', '=', 'm_satuan.id')
-                    ->select([
-                        'm_item.id_barang as id',
-                        'm_item.kode_barang',
-                        'm_item.nama_barang',
-                        'm_item.id_satuan',
-                        'm_satuan.kode_satuan as satuan',
+                foreach ($purchaseOrders as $purchaseOrder) {
+                    $orderLines = $linesByOrder->get((string) $purchaseOrder->id, collect());
+                    $purchaseOrder->item_count = $orderLines->count();
+                    $purchaseOrder->qty_remaining = $orderLines->sum('remaining_qty');
+                    $purchaseOrder->received_lines = $orderLines->filter(
+                        fn (object $line): bool => (float) $line->received_qty > 0
+                    )->count();
+                }
+
+                $suppliers = $purchaseOrders
+                    ->unique('id_rekanan')
+                    ->map(fn (object $order): array => [
+                        'id' => (string) $order->id_rekanan,
+                        'name' => $order->nama_rekanan,
                     ])
-                    ->orderBy('m_item.nama_barang')
-                    ->get();
-            } catch (\Throwable) {
-                $itemList = collect();
+                    ->values();
+
+                $ringkasan = array_merge($ringkasan, [
+                    'purchase_orders' => $purchaseOrders->count(),
+                    'items' => $lines->count(),
+                    'qty' => $lines->sum('remaining_qty'),
+                ]);
             }
         } catch (\Throwable $e) {
-            $faktur = collect();
+            $purchaseOrders = collect();
+            $suppliers = collect();
             $dbError = $e->getMessage();
         }
 
-        return view('faktur-pembelian.index', compact('faktur', 'rekananList', 'itemList', 'dbError'));
+        $purchaseOrderOptions = $purchaseOrders->map(fn (object $purchaseOrder): array => [
+            'id' => (string) $purchaseOrder->id,
+            'supplier_id' => (string) $purchaseOrder->id_rekanan,
+            'number' => $purchaseOrder->no_transaksi,
+        ])->values();
+
+        return view('receipt-dashboard', compact(
+            'purchaseOrders',
+            'purchaseOrderOptions',
+            'suppliers',
+            'ringkasan',
+            'tanggalAwal',
+            'tanggalAkhir',
+            'dbError'
+        ));
+    }
+
+    public function purchaseOrderDetails(int $id): JsonResponse
+    {
+        $connection = DB::connection('oracle');
+        $purchaseOrder = $connection->table('pmb_purchorder_m as po')
+            ->join('m_rekanan as r', 'po.id_rekanan', '=', 'r.id')
+            ->select([
+                'po.id_transaksi as id',
+                'po.no_transaksi',
+                'po.id_rekanan',
+                'r.nama_rekanan',
+            ])
+            ->where('po.id_transaksi', $id)
+            ->first();
+
+        abort_if($purchaseOrder === null, 404);
+
+        $items = $this->getOpenPurchaseOrderLines($connection, [$id]);
+        abort_if($items->isEmpty(), 404);
+
+        return response()->json([
+            'id' => (string) $purchaseOrder->id,
+            'number' => $purchaseOrder->no_transaksi,
+            'supplier_id' => (string) $purchaseOrder->id_rekanan,
+            'supplier' => $purchaseOrder->nama_rekanan,
+            'items' => $items->values(),
+        ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
         $request->merge([
-            'nama_rekanan' => is_string($request->input('nama_rekanan'))
-                ? trim($request->input('nama_rekanan'))
-                : $request->input('nama_rekanan'),
+            'no_sj' => is_string($request->input('no_sj'))
+                ? (trim($request->input('no_sj')) ?: null)
+                : $request->input('no_sj'),
             'keterangan' => is_string($request->input('keterangan'))
-                ? (trim($request->input('keterangan')) === '' ? null : trim($request->input('keterangan')))
+                ? (trim($request->input('keterangan')) ?: null)
                 : $request->input('keterangan'),
         ]);
 
-        $items = $request->input('items');
-        if (is_array($items)) {
-            foreach ($items as $index => $item) {
-                if (! is_array($item)) {
+        $validated = $request->validate([
+            'po_id' => ['required', 'integer'],
+            'tanggal' => ['required', 'date'],
+            'no_sj' => ['nullable', 'string', 'max:50'],
+            'tgl_sj' => ['required', 'date'],
+            'keterangan' => ['nullable', 'string', 'max:255'],
+            'items' => ['required', 'array', 'min:1', 'max:100'],
+            'items.*.po_detail_id' => ['required', 'integer'],
+            'items.*.qty' => ['required', 'numeric', 'min:0', 'max:999999999'],
+        ]);
+
+        if (collect($validated['items'])->every(
+            fn (array $item): bool => (float) $item['qty'] <= 0
+        )) {
+            throw ValidationException::withMessages([
+                'items' => 'Masukkan jumlah terima lebih dari 0 pada minimal satu barang.',
+            ]);
+        }
+
+        $connection = DB::connection('oracle');
+        $connection->transaction(function () use ($connection, $validated): void {
+            $purchaseOrder = $connection->table('pmb_purchorder_m')
+                ->where('id_transaksi', $validated['po_id'])
+                ->lockForUpdate()
+                ->first();
+
+            abort_if($purchaseOrder === null, 404);
+
+            $purchaseOrderLines = $connection->table('pmb_purchorder_d')
+                ->where('id_transaksi', $validated['po_id'])
+                ->orderBy('no_urut')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy(fn (object $line): string => (string) $line->id_detail);
+
+            $selectedLines = [];
+            $seenDetails = [];
+            foreach ($validated['items'] as $item) {
+                $detailId = (string) $item['po_detail_id'];
+                $qty = (float) $item['qty'];
+
+                if ($qty <= 0) {
                     continue;
                 }
 
-                foreach (['kode_barang', 'nama_barang', 'satuan'] as $field) {
-                    if (is_string($item[$field] ?? null)) {
-                        $items[$index][$field] = trim($item[$field]);
-                    }
+                if (isset($seenDetails[$detailId])) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Detail barang PO yang sama tidak boleh dikirim lebih dari satu kali.',
+                    ]);
+                }
+                $seenDetails[$detailId] = true;
+
+                $line = $purchaseOrderLines->get($detailId);
+                if ($line === null) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Barang yang dipilih tidak sesuai dengan Purchase Order.',
+                    ]);
                 }
 
-                if (($items[$index]['kode_barang'] ?? null) === '') {
-                    $items[$index]['kode_barang'] = null;
+                $orderedQty = (float) (($line->jumlah2 ?? 0) > 0
+                    ? $line->jumlah2
+                    : ($line->jumlah ?? 0));
+                $receivedQty = (float) ($line->qty_bpb ?? 0);
+                $remainingQty = max(0, $orderedQty - $receivedQty);
+
+                if ($qty > $remainingQty) {
+                    throw ValidationException::withMessages([
+                        'items' => "Jumlah penerimaan melebihi sisa PO untuk detail {$detailId} ({$remainingQty}).",
+                    ]);
                 }
+
+                $selectedLines[$detailId] = [
+                    'line' => $line,
+                    'qty' => $qty,
+                    'conversion' => (float) ($line->qty_satuan ?? 0) > 0
+                        ? (float) $line->qty_satuan
+                        : 1,
+                ];
             }
-            $request->merge(['items' => $items]);
-        }
 
-        $validated = $request->validate([
-            'kode_transaksi' => ['required', 'string'],
-            'tanggal' => ['required', 'date'],
-            'nama_rekanan' => ['required', 'string', 'max:150'],
-            'keterangan' => ['nullable', 'string', 'max:1000'],
-            'items' => ['required', 'array', 'min:1', 'max:100'],
-            'items.*.kode_barang' => ['nullable', 'string', 'max:50'],
-            'items.*.nama_barang' => ['required', 'string', 'max:150'],
-            'items.*.satuan' => ['required', 'string', 'max:30'],
-            'items.*.jumlah' => ['required', 'integer', 'min:1', 'max:2147483647'],
-        ]);
+            if ($selectedLines === []) {
+                throw ValidationException::withMessages([
+                    'items' => 'Masukkan jumlah terima lebih dari 0 pada minimal satu barang.',
+                ]);
+            }
 
-        $connection = DB::connection('oracle');
-        $transaksiId = $connection->transaction(function () use ($connection, $validated): int {
+            $lineDetails = $this->getOpenPurchaseOrderLines(
+                $connection,
+                [$validated['po_id']]
+            )->keyBy(fn (object $line): string => (string) $line->po_detail_id);
+
             $tanggal = Carbon::parse($validated['tanggal'])->format('Y-m-d');
-            $id = (int) $connection->selectOne(
+            $tanggalSuratJalan = Carbon::parse($validated['tgl_sj'])->format('Y-m-d');
+            $transactionId = (int) $connection->selectOne(
                 'SELECT "SEQ_GD_TERIMA_M".NEXTVAL AS "id" FROM DUAL'
             )->id;
-
-            $counter = str_pad((string) $id, 5, '0', STR_PAD_LEFT);
-            $kodeTransaksi = 'TB';
-            $noTransaksi = $kodeTransaksi.Carbon::parse($tanggal)->format('ym').$counter;
-            $tanggalInsert = now()->format('Y-m-d H:i:s');
-
-            $idRekanan = $this->resolveRekananId($connection, $validated['nama_rekanan']);
+            $counter = str_pad((string) $transactionId, 5, '0', STR_PAD_LEFT);
+            $transactionNumber = 'TB'.Carbon::parse($tanggal)->format('ym').$counter;
 
             $connection->table('gd_terima_beli_m')->insert([
-                'id_transaksi' => $id,
-                'no_transaksi' => $noTransaksi,
-                'no_transaksi_kode' => $kodeTransaksi,
+                'id_transaksi' => $transactionId,
+                'no_transaksi' => $transactionNumber,
+                'no_transaksi_kode' => 'TB',
                 'no_transaksi_counter' => $counter,
                 'tgl_transaksi' => $tanggal.' 00:00:00',
                 'opr_insert' => auth()->user()?->name ?? 'admin',
-                'tgl_insert' => $tanggalInsert,
-                'keterangan' => isset($validated['keterangan'])
-                    ? trim($validated['keterangan'])
-                    : null,
+                'tgl_insert' => now()->format('Y-m-d H:i:s'),
+                'keterangan' => $validated['keterangan'] ?? null,
                 'jns_transaksi' => '03',
-                'no_sj' => '-',
-                'tgl_sj' => $tanggal.' 00:00:00',
-                'id_rekanan' => $idRekanan,
+                'no_sj' => $validated['no_sj'] ?? '-',
+                'tgl_sj' => $tanggalSuratJalan.' 00:00:00',
+                'id_rekanan' => (int) $purchaseOrder->id_rekanan,
+                'id_po' => (int) $purchaseOrder->id_transaksi,
             ]);
 
-            foreach ($validated['items'] as $index => $item) {
-                $detailId = (int) $connection->selectOne(
+            $rowNumber = 0;
+            foreach ($selectedLines as $detailId => $selected) {
+                $line = $selected['line'];
+                $detail = $lineDetails->get($detailId);
+                if ($detail === null) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Detail PO tidak lagi tersedia untuk diterima.',
+                    ]);
+                }
+                if (empty($line->id_barang) || empty($line->id_satuan)) {
+                    throw ValidationException::withMessages([
+                        'items' => "Data barang atau satuan pada detail PO {$detailId} belum lengkap.",
+                    ]);
+                }
+
+                $qty = $selected['qty'];
+                $baseQty = $qty * $selected['conversion'];
+                $receiptDetailId = (int) $connection->selectOne(
                     'SELECT "SEQ_GD_TERIMA_D".NEXTVAL AS "id" FROM DUAL'
                 )->id;
-                $jumlah = (int) $item['jumlah'];
-                $namaBarang = trim($item['nama_barang']);
-                $kodeBarang = isset($item['kode_barang']) ? trim($item['kode_barang']) : null;
-                $satuan = trim($item['satuan']);
-
-                $itemInfo = $this->resolveBarangItem($connection, $kodeBarang, $namaBarang, $satuan);
-                $idBarang = $itemInfo['id_barang'];
-                $idSatuan = $itemInfo['id_satuan'];
+                $rowNumber++;
 
                 $connection->table('gd_terima_beli_d')->insert([
-                    'id_detail' => $detailId,
-                    'id_transaksi' => $id,
-                    'no_urut' => $index + 1,
-                    'id_barang' => $idBarang,
-                    'id_satuan' => $idSatuan,
-                    'jumlah' => $jumlah,
+                    'id_detail' => $receiptDetailId,
+                    'id_transaksi' => $transactionId,
+                    'no_urut' => $rowNumber,
+                    'id_barang' => (int) $line->id_barang,
+                    'id_satuan' => (int) $line->id_satuan,
+                    'jumlah' => $baseQty,
+                    'jumlah2' => $qty,
+                    'id_satuan2' => (int) ($line->id_satuan2 ?? $line->id_satuan),
+                    'id_po' => (int) $purchaseOrder->id_transaksi,
+                    'id_po_detail' => (int) $line->id_detail,
+                    'id_pesan' => $line->id_pesan,
                     'is_stok' => 'Y',
-                    'is_project' => 'N',
+                    'is_project' => $line->is_project ?: 'N',
+                    'id_project' => $line->id_project,
                 ]);
+
+                $connection->table('pmb_purchorder_d')
+                    ->where('id_detail', $line->id_detail)
+                    ->update(['qty_bpb' => (float) ($line->qty_bpb ?? 0) + $qty]);
 
                 $movementId = (int) $connection->selectOne(
                     'SELECT "T_DATA_BARANG_ID_SEQ".NEXTVAL AS "id" FROM DUAL'
@@ -175,192 +331,58 @@ class FakturPembelianController extends Controller
 
                 $connection->table('t_data_barang')->insert([
                     'id' => $movementId,
-                    'nama_barang' => $namaBarang,
+                    'nama_barang' => $detail->nama_barang ?: 'Barang #'.$line->id_barang,
                     'jenis_transaksi' => 'masuk',
-                    'jumlah' => $jumlah,
+                    'jumlah' => $baseQty,
                     'tanggal' => $tanggal.' 00:00:00',
-                    'keterangan' => "Faktur {$noTransaksi} - ".trim($validated['nama_rekanan']),
+                    'keterangan' => "Penerimaan {$transactionNumber} - PO {$purchaseOrder->no_transaksi}",
                 ]);
             }
-
-            return $id;
         });
 
-        return redirect()->route('faktur-pembelian.show', $transaksiId)
-            ->with('success', 'Faktur pembelian berhasil disimpan dan stok telah diperbarui.');
+        return redirect()->route('barang.index')
+            ->with('success', 'Penerimaan barang dari Purchase Order berhasil disimpan.');
     }
 
-    public function show(int $id): View
-    {
-        $connection = DB::connection('oracle');
-        $faktur = $connection->table('gd_terima_beli_m')
-            ->leftJoin('m_rekanan', 'gd_terima_beli_m.id_rekanan', '=', 'm_rekanan.id')
-            ->select([
-                'gd_terima_beli_m.id_transaksi as id',
-                'gd_terima_beli_m.id_transaksi',
-                'gd_terima_beli_m.no_transaksi',
-                'gd_terima_beli_m.no_transaksi as nomor_faktur',
-                'gd_terima_beli_m.no_transaksi_kode as kode_transaksi',
-                'gd_terima_beli_m.tgl_transaksi as tanggal',
-                'gd_terima_beli_m.opr_insert as operator_insert',
-                'gd_terima_beli_m.tgl_insert as tanggal_insert',
-                'gd_terima_beli_m.keterangan',
-                'm_rekanan.nama_rekanan',
-                'm_rekanan.kode_rekanan',
-                'm_rekanan.alamat as alamat_rekanan',
-                'm_rekanan.no_telp as no_telp_rekanan',
-            ])
-            ->where('gd_terima_beli_m.id_transaksi', $id)
-            ->first();
-
-        abort_if($faktur === null, 404);
-
-        $items = $connection->table('gd_terima_beli_d')
-            ->leftJoin('m_item', 'gd_terima_beli_d.id_barang', '=', 'm_item.id_barang')
-            ->leftJoin('m_satuan', 'gd_terima_beli_d.id_satuan', '=', 'm_satuan.id')
-            ->select([
-                'gd_terima_beli_d.id_detail as id',
-                'gd_terima_beli_d.id_detail',
-                'gd_terima_beli_d.id_transaksi as faktur_id',
-                'gd_terima_beli_d.id_transaksi',
-                'gd_terima_beli_d.no_urut',
-                'gd_terima_beli_d.jumlah',
-                'm_item.kode_barang',
-                'm_item.nama_barang',
-                'm_satuan.kode_satuan as satuan',
-            ])
-            ->where('gd_terima_beli_d.id_transaksi', $id)
-            ->orderBy('gd_terima_beli_d.no_urut')
-            ->orderBy('gd_terima_beli_d.id_detail')
-            ->get();
-
-        return view('faktur-pembelian.show', compact('faktur', 'items'));
-    }
-
-    protected function resolveRekananId(ConnectionInterface $connection, string $namaRekanan): int
-    {
-        $cleanName = trim($namaRekanan);
-        $cleanNoDot = str_replace('.', '', mb_strtolower($cleanName));
-
-        $rekanan = $connection->table('m_rekanan')
-            ->whereRaw("LOWER(TRIM(REPLACE(nama_rekanan, '.', ''))) = ?", [$cleanNoDot])
-            ->orWhereRaw('LOWER(TRIM(kode_rekanan)) = ?', [mb_strtolower($cleanName)])
-            ->first();
-
-        if ($rekanan !== null) {
-            return (int) $rekanan->id;
-        }
-
-        $id = (int) $connection->selectOne(
-            'SELECT "M_REKANAN_ID_SEQ".NEXTVAL AS "id" FROM DUAL'
-        )->id;
-
-        $connection->table('m_rekanan')->insert([
-            'id' => $id,
-            'kode_rekanan' => 'SPL-'.str_pad((string) $id, 3, '0', STR_PAD_LEFT),
-            'nama_rekanan' => $cleanName,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        return $id;
-    }
-
-    protected function resolveSatuanId(ConnectionInterface $connection, string $satuan): int
-    {
-        $cleanSatuan = trim($satuan);
-        $satuanRow = $connection->table('m_satuan')
-            ->whereRaw('LOWER(TRIM(kode_satuan)) = ?', [mb_strtolower($cleanSatuan)])
-            ->first();
-
-        if ($satuanRow !== null) {
-            return (int) $satuanRow->id;
-        }
-
-        $dasar = $connection->table('m_satuan_dasar')
-            ->whereRaw('LOWER(TRIM(kode_satuan)) = ?', [mb_strtolower($cleanSatuan)])
-            ->first();
-
-        if ($dasar !== null) {
-            $idDasar = (int) $dasar->id;
-        } else {
-            $idDasar = (int) $connection->selectOne(
-                'SELECT "M_SATUAN_DASAR_ID_SEQ".NEXTVAL AS "id" FROM DUAL'
-            )->id;
-
-            $connection->table('m_satuan_dasar')->insert([
-                'id' => $idDasar,
-                'kode_satuan' => strtoupper(substr($cleanSatuan, 0, 20)),
-                'nama_satuan' => $cleanSatuan,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        $idSatuan = (int) $connection->selectOne(
-            'SELECT "M_SATUAN_ID_SEQ".NEXTVAL AS "id" FROM DUAL'
-        )->id;
-
-        $connection->table('m_satuan')->insert([
-            'id' => $idSatuan,
-            'id_satuan_dasar' => $idDasar,
-            'kode_satuan' => $cleanSatuan,
-            'nama_satuan' => $cleanSatuan,
-            'konversi' => 1,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        return $idSatuan;
-    }
-
-    protected function resolveBarangItem(
+    /**
+     * @param  array<int, int|string>  $purchaseOrderIds
+     * @return Collection<int, object>
+     */
+    private function getOpenPurchaseOrderLines(
         ConnectionInterface $connection,
-        ?string $kodeBarang,
-        string $namaBarang,
-        string $satuan
-    ): array {
-        $cleanKode = ! empty($kodeBarang) ? trim($kodeBarang) : null;
-        $cleanNama = trim($namaBarang);
-
-        $itemQuery = $connection->table('m_item');
-        if (! empty($cleanKode)) {
-            $itemQuery->whereRaw('LOWER(TRIM(kode_barang)) = ?', [mb_strtolower($cleanKode)]);
-        } else {
-            $itemQuery->whereRaw('LOWER(TRIM(nama_barang)) = ?', [mb_strtolower($cleanNama)]);
+        array $purchaseOrderIds
+    ): Collection {
+        if ($purchaseOrderIds === []) {
+            return collect();
         }
 
-        $itemRow = $itemQuery->first();
-        if ($itemRow !== null) {
-            $idSatuan = ! empty($itemRow->id_satuan)
-                ? (int) $itemRow->id_satuan
-                : $this->resolveSatuanId($connection, $satuan);
-
-            return [
-                'id_barang' => (int) $itemRow->id_barang,
-                'id_satuan' => $idSatuan,
-            ];
-        }
-
-        $idSatuan = $this->resolveSatuanId($connection, $satuan);
-
-        $id = (int) $connection->selectOne(
-            'SELECT "M_ITEM_ID_SEQ".NEXTVAL AS "id" FROM DUAL'
-        )->id;
-
-        $connection->table('m_item')->insert([
-            'id_barang' => $id,
-            'kode_barang' => ! empty($cleanKode) ? $cleanKode : 'BRG'.str_pad((string) $id, 3, '0', STR_PAD_LEFT),
-            'nama_barang' => $cleanNama,
-            'id_satuan' => $idSatuan,
-            'harga_satuan' => 0,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        return [
-            'id_barang' => $id,
-            'id_satuan' => $idSatuan,
-        ];
+        return $connection->table('pmb_purchorder_d as pod')
+            ->leftJoin('m_item as item', 'pod.id_barang', '=', 'item.id_barang')
+            ->leftJoin('m_satuan as unit', 'pod.id_satuan', '=', 'unit.id')
+            ->leftJoin('m_satuan as item_unit', 'item.id_satuan', '=', 'item_unit.id')
+            ->select([
+                'pod.id_transaksi as po_id',
+                'pod.id_detail as po_detail_id',
+                'pod.no_urut',
+                'pod.id_barang',
+                'pod.id_satuan',
+                'pod.id_satuan2',
+                'pod.id_pesan',
+                'pod.id_project',
+                'pod.is_project',
+                'pod.qty_satuan as conversion_qty',
+                'pod.jumlah as po_qty_base',
+                'pod.jumlah2 as po_qty',
+                'pod.qty_bpb as received_qty',
+                'item.kode_barang',
+                'item.nama_barang',
+            ])
+            ->selectRaw("NVL(unit.kode_satuan, NVL(unit.nama_satuan, NVL(item_unit.kode_satuan, NVL(item_unit.nama_satuan, 'Unit ' || TO_CHAR(pod.id_satuan))))) as unit")
+            ->selectRaw('NVL(NULLIF(pod.jumlah2, 0), NVL(pod.jumlah, 0)) as ordered_qty')
+            ->selectRaw('GREATEST(NVL(NULLIF(pod.jumlah2, 0), NVL(pod.jumlah, 0)) - NVL(pod.qty_bpb, 0), 0) as remaining_qty')
+            ->whereIn('pod.id_transaksi', $purchaseOrderIds)
+            ->whereRaw('NVL(NULLIF(pod.jumlah2, 0), NVL(pod.jumlah, 0)) > NVL(pod.qty_bpb, 0)')
+            ->orderBy('pod.no_urut')
+            ->get();
     }
 }

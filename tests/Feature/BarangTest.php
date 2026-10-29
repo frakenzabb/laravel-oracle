@@ -9,34 +9,6 @@ use Tests\TestCase;
 
 class BarangTest extends TestCase
 {
-    public function test_warehouse_page_shows_stock_and_movement_history(): void
-    {
-        $query = Mockery::mock();
-        $connection = Mockery::mock(ConnectionInterface::class);
-
-        $query->shouldReceive('orderByDesc')->twice()->withAnyArgs()->andReturnSelf();
-        $query->shouldReceive('get')->once()->andReturn(collect([
-            (object) [
-                'id' => 1,
-                'nama_barang' => 'Kabel LAN',
-                'jenis_transaksi' => 'masuk',
-                'jumlah' => 10,
-                'tanggal' => '2026-10-16 00:00:00',
-                'keterangan' => 'Stok awal',
-            ],
-        ]));
-        $connection->shouldReceive('table')->once()->with('t_data_barang')->andReturn($query);
-        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
-
-        $this->get('/')
-            ->assertOk()
-            ->assertSee('Manajemen Gudang Barang')
-            ->assertSee('Kabel LAN')
-            ->assertSee('Stok tersedia')
-            ->assertSee('Stok awal')
-            ->assertSee('Barang masuk');
-    }
-
     public function test_incoming_movement_is_saved(): void
     {
         $query = Mockery::mock();

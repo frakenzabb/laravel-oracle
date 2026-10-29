@@ -9,383 +9,309 @@ use Tests\TestCase;
 
 class FakturPembelianTest extends TestCase
 {
-    public function test_faktur_form_shows_recent_purchases(): void
+    public function test_homepage_lists_existing_purchase_orders_with_remaining_items(): void
     {
-        $query = Mockery::mock();
+        $receiptSummaryQuery = Mockery::mock();
+        $purchaseOrdersQuery = Mockery::mock();
+        $linesQuery = $this->mockOpenLinesQuery();
         $connection = Mockery::mock(ConnectionInterface::class);
 
-        $query->shouldReceive('leftJoin')->once()
-            ->with('m_rekanan', 'gd_terima_beli_m.id_rekanan', '=', 'm_rekanan.id')
+        $receiptSummaryQuery->shouldReceive('leftJoin')->once()
+            ->with('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi')
             ->andReturnSelf();
-        $query->shouldReceive('select')->once()->with(Mockery::type('array'))->andReturnSelf();
-        $query->shouldReceive('orderByDesc')->twice()->withAnyArgs()->andReturnSelf();
-        $query->shouldReceive('limit')->once()->with(20)->andReturnSelf();
-        $query->shouldReceive('get')->once()->andReturn(collect([
+        $receiptSummaryQuery->shouldReceive('whereBetween')->once()
+            ->with('receipt.tgl_transaksi', Mockery::type('array'))->andReturnSelf();
+        $receiptSummaryQuery->shouldReceive('selectRaw')->once()
+            ->with(Mockery::type('string'))->andReturnSelf();
+        $receiptSummaryQuery->shouldReceive('first')->once()->andReturn((object) [
+            'transaction_count' => 4,
+            'item_count' => 11,
+            'received_qty' => 18774,
+        ]);
+
+        $purchaseOrdersQuery->shouldReceive('join')->once()
+            ->with('m_rekanan as r', 'po.id_rekanan', '=', 'r.id')
+            ->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('select')->once()
+            ->with(Mockery::type('array'))->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('whereExists')->once()
+            ->with(Mockery::type('Closure'))->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('whereBetween')->once()
+            ->with('po.tgl_transaksi', Mockery::on(
+                fn (array $range): bool => $range[0]->format('Y-m-d H:i:s') === '2026-10-01 00:00:00'
+                    && $range[1]->format('Y-m-d H:i:s') === '2026-10-29 23:59:59'
+            ))
+            ->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('orderByDesc')->twice()
+            ->withAnyArgs()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('get')->once()->andReturn(collect([
             (object) [
-                'id' => 7,
-                'id_transaksi' => 7,
-                'no_transaksi' => 'TB261000007',
-                'nomor_faktur' => 'TB261000007',
-                'tanggal' => '2026-10-16',
+                'id' => 20,
+                'no_transaksi' => 'PO-2026-0020',
+                'tanggal' => '2026-10-20',
+                'status' => '2',
+                'id_rekanan' => 4,
                 'nama_rekanan' => 'CV Sumber Rejeki',
-                'keterangan' => 'Pembelian bahan',
-            ],
-        ]));
-        $rekananListQuery = Mockery::mock();
-        $rekananListQuery->shouldReceive('orderBy')->with('nama_rekanan')->andReturnSelf();
-        $rekananListQuery->shouldReceive('get')->andReturn(collect([
-            (object) [
-                'id' => 1,
-                'kode_rekanan' => 'SPL001',
-                'nama_rekanan' => 'CV Sumber Rejeki',
-                'alamat' => 'Jl. Merdeka',
-                'no_telp' => '08123456789',
+                'kode_rekanan' => 'SPL004',
             ],
         ]));
 
-        $itemListQuery = Mockery::mock();
-        $itemListQuery->shouldReceive('leftJoin')->with('m_satuan', 'm_item.id_satuan', '=', 'm_satuan.id')->andReturnSelf();
-        $itemListQuery->shouldReceive('select')->with(Mockery::type('array'))->andReturnSelf();
-        $itemListQuery->shouldReceive('orderBy')->with('m_item.nama_barang')->andReturnSelf();
-        $itemListQuery->shouldReceive('get')->andReturn(collect([
+        $linesQuery->shouldReceive('whereIn')->once()
+            ->with('pod.id_transaksi', [20])->andReturnSelf();
+        $linesQuery->shouldReceive('get')->once()->andReturn(collect([
             (object) [
-                'id' => 1,
+                'po_id' => 20,
+                'po_detail_id' => 201,
                 'kode_barang' => 'BRG001',
-                'nama_barang' => 'Besi Hollow 4x4',
-                'satuan' => 'Pcs',
+                'nama_barang' => 'Besi Hollow',
+                'unit' => 'Pcs',
+                'ordered_qty' => 15,
+                'received_qty' => 5,
+                'remaining_qty' => 10,
             ],
         ]));
 
-        $connection->shouldReceive('table')->with('gd_terima_beli_m')->andReturn($query);
-        $connection->shouldReceive('table')->with('m_rekanan')->andReturn($rekananListQuery);
-        $connection->shouldReceive('table')->with('m_item')->andReturn($itemListQuery);
+        $connection->shouldReceive('table')->with('gd_terima_beli_m as receipt')->andReturn($receiptSummaryQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_m as po')->andReturn($purchaseOrdersQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d as pod')->andReturn($linesQuery);
         DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
 
-        $this->get('/faktur-pembelian')
+        $this->get('/?tanggal_awal=2026-10-01&tanggal_akhir=2026-10-29')
             ->assertOk()
-            ->assertSee('Faktur Pembelian')
-            ->assertSee('Detail Barang')
-            ->assertSee('Kode Barang')
-            ->assertSee('Jumlah')
-            ->assertSee('TB261000007')
-            ->assertDontSee('Harga')
-            ->assertDontSee('Total Transaksi');
+            ->assertSee('Purchase Order Tersedia')
+            ->assertSee('PO-2026-0020')
+            ->assertSee('CV Sumber Rejeki')
+            ->assertSee('Jumlah Transaksi')
+            ->assertSee('Total Baris Item')
+            ->assertSee('Total Qty Diterima')
+            ->assertSee('18.774')
+            ->assertSee('Qty Belum Diterima')
+            ->assertSee('value="2026-10-01"', false)
+            ->assertSee('value="2026-10-29"', false)
+            ->assertSee('Pilih PO')
+            ->assertSee('tidak menyediakan pembuatan atau perubahan PO')
+            ->assertDontSee('Tambah PO');
     }
 
-    public function test_saving_faktur_records_items_and_increases_stock(): void
+    public function test_purchase_order_details_endpoint_returns_only_remaining_lines(): void
     {
-        $headerQuery = Mockery::mock();
-        $detailQuery = Mockery::mock();
-        $movementQuery = Mockery::mock();
-        $rekananQuery = Mockery::mock();
-        $satuanQuery = Mockery::mock();
-        $itemQuery = Mockery::mock();
+        $purchaseOrderQuery = Mockery::mock();
+        $linesQuery = $this->mockOpenLinesQuery();
         $connection = Mockery::mock(ConnectionInterface::class);
 
-        // Sequence calls:
-        // 1. SEQ_GD_TERIMA_M for header id_transaksi
-        // 2. SEQ_GD_TERIMA_D for detail id_detail
-        // 3. T_DATA_BARANG_ID_SEQ for stock movement
-        $connection->shouldReceive('selectOne')
-            ->with('SELECT "SEQ_GD_TERIMA_M".NEXTVAL AS "id" FROM DUAL')
-            ->once()
-            ->andReturn((object) ['id' => 5]);
+        $purchaseOrderQuery->shouldReceive('join')->once()
+            ->with('m_rekanan as r', 'po.id_rekanan', '=', 'r.id')
+            ->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('select')->once()
+            ->with(Mockery::type('array'))->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('where')->once()
+            ->with('po.id_transaksi', 20)->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('first')->once()->andReturn((object) [
+            'id' => 20,
+            'no_transaksi' => 'PO-2026-0020',
+            'id_rekanan' => 4,
+            'nama_rekanan' => 'CV Sumber Rejeki',
+        ]);
+        $linesQuery->shouldReceive('whereIn')->once()
+            ->with('pod.id_transaksi', [20])->andReturnSelf();
+        $linesQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'po_id' => 20,
+                'po_detail_id' => 201,
+                'kode_barang' => 'BRG001',
+                'nama_barang' => 'Besi Hollow',
+                'unit' => 'Pcs',
+                'ordered_qty' => 15,
+                'received_qty' => 5,
+                'remaining_qty' => 10,
+            ],
+        ]));
 
-        $connection->shouldReceive('selectOne')
-            ->with('SELECT "SEQ_GD_TERIMA_D".NEXTVAL AS "id" FROM DUAL')
-            ->once()
-            ->andReturn((object) ['id' => 11]);
+        $connection->shouldReceive('table')->with('pmb_purchorder_m as po')->andReturn($purchaseOrderQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d as pod')->andReturn($linesQuery);
+        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
 
-        $connection->shouldReceive('selectOne')
-            ->with('SELECT "T_DATA_BARANG_ID_SEQ".NEXTVAL AS "id" FROM DUAL')
-            ->once()
-            ->andReturn((object) ['id' => 30]);
+        $this->getJson('/purchase-orders/20/details')
+            ->assertOk()
+            ->assertJsonPath('number', 'PO-2026-0020')
+            ->assertJsonPath('supplier', 'CV Sumber Rejeki')
+            ->assertJsonPath('items.0.po_detail_id', 201)
+            ->assertJsonPath('items.0.remaining_qty', 10);
+    }
 
-        // Resolve lookup queries:
-        $rekananQuery->shouldReceive('whereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $rekananQuery->shouldReceive('orWhereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $rekananQuery->shouldReceive('first')->once()->andReturn((object) ['id' => 2]);
+    public function test_receiving_purchase_order_writes_receipt_and_updates_received_quantity(): void
+    {
+        $purchaseOrderQuery = Mockery::mock();
+        $lockedLinesQuery = Mockery::mock();
+        $openLinesQuery = $this->mockOpenLinesQuery();
+        $headerQuery = Mockery::mock();
+        $receiptDetailsQuery = Mockery::mock();
+        $movementQuery = Mockery::mock();
+        $connection = Mockery::mock(ConnectionInterface::class);
 
-        $satuanQuery->shouldReceive('whereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $satuanQuery->shouldReceive('first')->once()->andReturn((object) ['id' => 2]);
+        $purchaseOrderQuery->shouldReceive('where')->once()
+            ->with('id_transaksi', '20')->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('first')->once()->andReturn((object) [
+            'id_transaksi' => 20,
+            'no_transaksi' => 'PO-2026-0020',
+            'id_rekanan' => 4,
+        ]);
 
-        $itemQuery->shouldReceive('whereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $itemQuery->shouldReceive('first')->once()->andReturn((object) ['id_barang' => 2]);
+        $poLine = (object) [
+            'id_transaksi' => 20,
+            'id_detail' => 201,
+            'no_urut' => 1,
+            'id_barang' => 9,
+            'id_satuan' => 2,
+            'id_satuan2' => 2,
+            'id_pesan' => null,
+            'id_project' => null,
+            'is_project' => 'N',
+            'qty_satuan' => 3,
+            'jumlah' => 45,
+            'jumlah2' => 15,
+            'qty_bpb' => 5,
+        ];
+        $lockedLinesQuery->shouldReceive('where')->once()
+            ->with('id_transaksi', '20')->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('orderBy')->once()
+            ->with('no_urut')->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('get')->once()->andReturn(collect([$poLine]));
 
-        // Header insert into gd_terima_beli_m
+        $openLinesQuery->shouldReceive('whereIn')->once()
+            ->with('pod.id_transaksi', ['20'])->andReturnSelf();
+        $openLinesQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'po_id' => 20,
+                'po_detail_id' => 201,
+                'kode_barang' => 'BRG001',
+                'nama_barang' => 'Besi Hollow',
+                'unit' => 'Pcs',
+                'ordered_qty' => 15,
+                'received_qty' => 5,
+                'remaining_qty' => 10,
+            ],
+        ]));
+
         $headerQuery->shouldReceive('insert')->once()->with(Mockery::on(
-            fn (array $row): bool => $row['id_transaksi'] === 5
-                && $row['no_transaksi'] === 'TB261000005'
-                && $row['no_transaksi_kode'] === 'TB'
-                && $row['no_transaksi_counter'] === '00005'
-                && str_starts_with($row['tgl_transaksi'], '2026-10-16')
-                && $row['id_rekanan'] === 2
+            fn (array $row): bool => $row['id_transaksi'] === 31
+                && $row['id_po'] === 20
+                && $row['id_rekanan'] === 4
+                && $row['no_sj'] === 'SJ-123'
+                && $row['tgl_sj'] === '2026-10-21 00:00:00'
         ))->andReturnTrue();
-
-        // Detail insert into gd_terima_beli_d
-        $detailQuery->shouldReceive('insert')->once()->with(Mockery::on(
-            fn (array $row): bool => $row['id_detail'] === 11
-                && $row['id_transaksi'] === 5
-                && $row['no_urut'] === 1
-                && $row['id_barang'] === 2
-                && $row['id_satuan'] === 2
-                && $row['jumlah'] === 10
+        $receiptDetailsQuery->shouldReceive('insert')->once()->with(Mockery::on(
+            fn (array $row): bool => $row['id_transaksi'] === 31
+                && $row['id_po'] === 20
+                && $row['id_po_detail'] === 201
+                && $row['jumlah'] === 6.0
+                && $row['jumlah2'] === 2.0
                 && $row['is_stok'] === 'Y'
         ))->andReturnTrue();
-
-        // Stock movement insert into t_data_barang
+        $lockedLinesQuery->shouldReceive('where')->once()
+            ->with('id_detail', 201)->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('update')->once()
+            ->with(['qty_bpb' => 7.0])->andReturn(1);
         $movementQuery->shouldReceive('insert')->once()->with(Mockery::on(
-            fn (array $row): bool => $row['id'] === 30
-                && $row['nama_barang'] === 'Besi Hollow 4x4'
+            fn (array $row): bool => $row['nama_barang'] === 'Besi Hollow'
                 && $row['jenis_transaksi'] === 'masuk'
-                && $row['jumlah'] === 10
-                && str_starts_with($row['tanggal'], '2026-10-16')
-                && str_contains($row['keterangan'], 'TB261000005')
+                && $row['jumlah'] === 6.0
         ))->andReturnTrue();
 
-        $connection->shouldReceive('table')->with('m_rekanan')->andReturn($rekananQuery);
-        $connection->shouldReceive('table')->with('m_satuan')->andReturn($satuanQuery);
-        $connection->shouldReceive('table')->with('m_item')->andReturn($itemQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_m')->andReturn($purchaseOrderQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d')->andReturn($lockedLinesQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d as pod')->andReturn($openLinesQuery);
         $connection->shouldReceive('table')->with('gd_terima_beli_m')->andReturn($headerQuery);
-        $connection->shouldReceive('table')->with('gd_terima_beli_d')->andReturn($detailQuery);
+        $connection->shouldReceive('table')->with('gd_terima_beli_d')->andReturn($receiptDetailsQuery);
         $connection->shouldReceive('table')->with('t_data_barang')->andReturn($movementQuery);
-
+        $connection->shouldReceive('selectOne')->andReturn(
+            (object) ['id' => 31],
+            (object) ['id' => 41],
+            (object) ['id' => 51]
+        );
         $connection->shouldReceive('transaction')
             ->once()
             ->andReturnUsing(fn (callable $callback) => $callback($connection));
         DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
 
-        $this->post('/faktur-pembelian', [
-            'kode_transaksi' => 'FAKTUR',
-            'tanggal' => '2026-10-16',
-            'nama_rekanan' => ' CV Sumber Rejeki ',
-            'keterangan' => 'Pembelian bahan',
+        $this->post('/penerimaan-barang', [
+            'po_id' => 20,
+            'tanggal' => '2026-10-20',
+            'no_sj' => 'SJ-123',
+            'tgl_sj' => '2026-10-21',
+            'keterangan' => 'Penerimaan sebagian',
             'items' => [
-                [
-                    'kode_barang' => 'BRG001',
-                    'nama_barang' => 'Besi Hollow 4x4',
-                    'satuan' => 'Pcs',
-                    'jumlah' => 10,
-                ],
+                ['po_detail_id' => 201, 'qty' => 2],
             ],
         ])
-            ->assertRedirect(route('faktur-pembelian.show', 5))
-            ->assertSessionHas('success', 'Faktur pembelian berhasil disimpan dan stok telah diperbarui.');
+            ->assertRedirect(route('barang.index'))
+            ->assertSessionHas('success', 'Penerimaan barang dari Purchase Order berhasil disimpan.');
     }
 
-    public function test_saving_faktur_supports_multiple_items_with_sequences_and_relations(): void
+    public function test_receipt_quantity_cannot_exceed_remaining_po_quantity(): void
     {
-        $headerQuery = Mockery::mock();
-        $detailQuery = Mockery::mock();
-        $movementQuery = Mockery::mock();
-        $rekananQuery = Mockery::mock();
-        $satuanQuery = Mockery::mock();
-        $itemQuery = Mockery::mock();
+        $purchaseOrderQuery = Mockery::mock();
+        $lockedLinesQuery = Mockery::mock();
         $connection = Mockery::mock(ConnectionInterface::class);
 
-        // Sequence calls:
-        // 1 for header
-        // 2 for details (SEQ_GD_TERIMA_D)
-        // 2 for stock movements (T_DATA_BARANG_ID_SEQ)
-        $connection->shouldReceive('selectOne')
-            ->with('SELECT "SEQ_GD_TERIMA_M".NEXTVAL AS "id" FROM DUAL')
-            ->once()
-            ->andReturn((object) ['id' => 9]);
-
-        $connection->shouldReceive('selectOne')
-            ->with('SELECT "SEQ_GD_TERIMA_D".NEXTVAL AS "id" FROM DUAL')
-            ->twice()
-            ->andReturn(
-                (object) ['id' => 101],
-                (object) ['id' => 102]
-            );
-
-        $connection->shouldReceive('selectOne')
-            ->with('SELECT "T_DATA_BARANG_ID_SEQ".NEXTVAL AS "id" FROM DUAL')
-            ->twice()
-            ->andReturn(
-                (object) ['id' => 201],
-                (object) ['id' => 202]
-            );
-
-        $rekananQuery->shouldReceive('whereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $rekananQuery->shouldReceive('orWhereRaw')->once()->withAnyArgs()->andReturnSelf();
-        $rekananQuery->shouldReceive('first')->once()->andReturn((object) ['id' => 3]);
-
-        $satuanQuery->shouldReceive('whereRaw')->twice()->withAnyArgs()->andReturnSelf();
-        $satuanQuery->shouldReceive('first')->twice()->andReturn(
-            (object) ['id' => 2],
-            (object) ['id' => 3]
-        );
-
-        $itemQuery->shouldReceive('whereRaw')->twice()->withAnyArgs()->andReturnSelf();
-        $itemQuery->shouldReceive('first')->twice()->andReturn(
-            (object) ['id_barang' => 2],
-            (object) ['id_barang' => 3]
-        );
-
-        $headerQuery->shouldReceive('insert')->once()->with(Mockery::on(
-            fn (array $row): bool => $row['id_transaksi'] === 9
-                && $row['no_transaksi'] === 'TB261000009'
-                && $row['id_rekanan'] === 3
-        ))->andReturnTrue();
-
-        $detailInserts = [];
-        $detailQuery->shouldReceive('insert')->twice()->with(Mockery::on(function (array $row) use (&$detailInserts): bool {
-            $detailInserts[] = $row;
-            return $row['id_transaksi'] === 9; // foreign key to header
-        }))->andReturnTrue();
-
-        $movementQuery->shouldReceive('insert')->twice()->with(Mockery::type('array'))->andReturnTrue();
-
-        $connection->shouldReceive('table')->with('m_rekanan')->andReturn($rekananQuery);
-        $connection->shouldReceive('table')->with('m_satuan')->andReturn($satuanQuery);
-        $connection->shouldReceive('table')->with('m_item')->andReturn($itemQuery);
-        $connection->shouldReceive('table')->with('gd_terima_beli_m')->andReturn($headerQuery);
-        $connection->shouldReceive('table')->with('gd_terima_beli_d')->andReturn($detailQuery);
-        $connection->shouldReceive('table')->with('t_data_barang')->andReturn($movementQuery);
-
+        $purchaseOrderQuery->shouldReceive('where')->once()
+            ->with('id_transaksi', '20')->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        $purchaseOrderQuery->shouldReceive('first')->once()->andReturn((object) [
+            'id_transaksi' => 20,
+            'no_transaksi' => 'PO-2026-0020',
+            'id_rekanan' => 4,
+        ]);
+        $lockedLinesQuery->shouldReceive('where')->once()
+            ->with('id_transaksi', '20')->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('orderBy')->once()
+            ->with('no_urut')->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('lockForUpdate')->once()->andReturnSelf();
+        $lockedLinesQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'id_detail' => 201,
+                'jumlah' => 15,
+                'jumlah2' => 15,
+                'qty_bpb' => 5,
+            ],
+        ]));
+        $connection->shouldReceive('table')->with('pmb_purchorder_m')->andReturn($purchaseOrderQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d')->andReturn($lockedLinesQuery);
         $connection->shouldReceive('transaction')
             ->once()
             ->andReturnUsing(fn (callable $callback) => $callback($connection));
         DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
 
-        $this->post('/faktur-pembelian', [
-            'kode_transaksi' => 'FAKTUR',
-            'tanggal' => '2026-10-16',
-            'nama_rekanan' => 'PT Megah Baja Nusantara',
-            'keterangan' => 'Pembelian multiple barang',
-            'items' => [
-                [
-                    'kode_barang' => 'BRG001',
-                    'nama_barang' => 'Besi Hollow 4x4',
-                    'satuan' => 'Pcs',
-                    'jumlah' => 10,
+        $this->from('/')
+            ->post('/penerimaan-barang', [
+                'po_id' => 20,
+                'tanggal' => '2026-10-20',
+                'tgl_sj' => '2026-10-20',
+                'items' => [
+                    ['po_detail_id' => 201, 'qty' => 11],
                 ],
-                [
-                    'kode_barang' => 'BRG002',
-                    'nama_barang' => 'Semen Tiga Roda',
-                    'satuan' => 'Zak',
-                    'jumlah' => 25,
-                ],
-            ],
-        ])
-            ->assertRedirect(route('faktur-pembelian.show', 9))
-            ->assertSessionHas('success');
-
-        $this->assertCount(2, $detailInserts);
-        $this->assertEquals(101, $detailInserts[0]['id_detail']);
-        $this->assertEquals(9, $detailInserts[0]['id_transaksi']);
-        $this->assertEquals(1, $detailInserts[0]['no_urut']);
-        $this->assertEquals(102, $detailInserts[1]['id_detail']);
-        $this->assertEquals(9, $detailInserts[1]['id_transaksi']);
-        $this->assertEquals(2, $detailInserts[1]['no_urut']);
-    }
-
-    public function test_faktur_requires_at_least_one_valid_item(): void
-    {
-        $this->from('/faktur-pembelian')
-            ->post('/faktur-pembelian', [
-                'kode_transaksi' => 'FAKTUR',
-                'tanggal' => '2026-10-16',
-                'nama_rekanan' => 'CV Sumber Rejeki',
-                'items' => [],
             ])
-            ->assertRedirect('/faktur-pembelian')
+            ->assertRedirect('/')
             ->assertSessionHasErrors('items');
     }
 
-    public function test_saved_faktur_can_be_viewed_without_price_or_totals(): void
+    public function test_legacy_faktur_page_redirects_home_and_no_detail_route_exists(): void
     {
-        $headerQuery = Mockery::mock();
-        $itemsQuery = Mockery::mock();
-        $connection = Mockery::mock(ConnectionInterface::class);
-
-        $headerQuery->shouldReceive('leftJoin')->once()
-            ->with('m_rekanan', 'gd_terima_beli_m.id_rekanan', '=', 'm_rekanan.id')
-            ->andReturnSelf();
-        $headerQuery->shouldReceive('select')->once()->with(Mockery::type('array'))->andReturnSelf();
-        $headerQuery->shouldReceive('where')->once()->with('gd_terima_beli_m.id_transaksi', 5)->andReturnSelf();
-        $headerQuery->shouldReceive('first')->once()->andReturn((object) [
-            'id' => 5,
-            'id_transaksi' => 5,
-            'no_transaksi' => 'TB261000005',
-            'nomor_faktur' => 'TB261000005',
-            'kode_transaksi' => 'TB',
-            'tanggal' => '2026-10-16',
-            'operator_insert' => 'admin',
-            'tanggal_insert' => '2026-10-16 08:15:00',
-            'nama_rekanan' => 'CV Sumber Rejeki',
-            'kode_rekanan' => 'SPL001',
-            'alamat_rekanan' => 'Jl. Merdeka No. 1',
-            'no_telp_rekanan' => '08123456789',
-            'keterangan' => null,
-        ]);
-
-        $itemsQuery->shouldReceive('leftJoin')->once()
-            ->with('m_item', 'gd_terima_beli_d.id_barang', '=', 'm_item.id_barang')
-            ->andReturnSelf();
-        $itemsQuery->shouldReceive('leftJoin')->once()
-            ->with('m_satuan', 'gd_terima_beli_d.id_satuan', '=', 'm_satuan.id')
-            ->andReturnSelf();
-        $itemsQuery->shouldReceive('select')->once()->with(Mockery::type('array'))->andReturnSelf();
-        $itemsQuery->shouldReceive('where')->once()->with('gd_terima_beli_d.id_transaksi', 5)->andReturnSelf();
-        $itemsQuery->shouldReceive('orderBy')->once()->with('gd_terima_beli_d.no_urut')->andReturnSelf();
-        $itemsQuery->shouldReceive('orderBy')->once()->with('gd_terima_beli_d.id_detail')->andReturnSelf();
-        $itemsQuery->shouldReceive('get')->once()->andReturn(collect([
-            (object) [
-                'id' => 11,
-                'id_detail' => 11,
-                'kode_barang' => 'BRG001',
-                'nama_barang' => 'Besi Hollow 4x4',
-                'satuan' => 'Pcs',
-                'jumlah' => 10,
-            ],
-        ]));
-
-        $connection->shouldReceive('table')
-            ->with('gd_terima_beli_m')->andReturn($headerQuery);
-        $connection->shouldReceive('table')
-            ->with('gd_terima_beli_d')->andReturn($itemsQuery);
-        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
-
-        $this->get('/faktur-pembelian/5')
-            ->assertOk()
-            ->assertSee('TB261000005')
-            ->assertSee('Besi Hollow 4x4')
-            ->assertSee('Pcs')
-            ->assertSee('Cetak Faktur')
-            ->assertDontSee('Harga')
-            ->assertDontSee('Total Transaksi');
+        $this->get('/faktur-pembelian')->assertRedirect('/');
+        $this->get('/faktur-pembelian/5')->assertNotFound();
     }
 
-    public function test_saving_faktur_rolls_back_and_surfaces_database_failure(): void
+    private function mockOpenLinesQuery(): Mockery\MockInterface
     {
-        $connection = Mockery::mock(ConnectionInterface::class);
+        $query = Mockery::mock();
+        $query->shouldReceive('leftJoin')->times(3)->withAnyArgs()->andReturnSelf();
+        $query->shouldReceive('select')->once()->with(Mockery::type('array'))->andReturnSelf();
+        $query->shouldReceive('selectRaw')->times(3)->with(Mockery::type('string'))->andReturnSelf();
+        $query->shouldReceive('whereRaw')->once()->with(Mockery::type('string'))->andReturnSelf();
+        $query->shouldReceive('orderBy')->once()->with('pod.no_urut')->andReturnSelf();
 
-        $connection->shouldReceive('transaction')
-            ->once()
-            ->andReturnUsing(function (callable $callback) {
-                // Simulate an exception inside the transaction
-                throw new \RuntimeException('Database constraint error on insert');
-            });
-        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Database constraint error on insert');
-
-        $this->withoutExceptionHandling()->post('/faktur-pembelian', [
-            'kode_transaksi' => 'FAKTUR',
-            'tanggal' => '2026-10-16',
-            'nama_rekanan' => 'CV Sumber Rejeki',
-            'items' => [
-                [
-                    'kode_barang' => 'BRG001',
-                    'nama_barang' => 'Besi Hollow 4x4',
-                    'satuan' => 'Pcs',
-                    'jumlah' => 10,
-                ],
-            ],
-        ]);
+        return $query;
     }
 }

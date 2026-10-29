@@ -8,55 +8,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Illuminate\View\View;
 
 class BarangController extends Controller
 {
     private const TABLE = 't_data_barang';
-
-    public function index(): View
-    {
-        $dbError = null;
-        try {
-            $data = DB::connection('oracle')
-                ->table(self::TABLE)
-                ->orderByDesc('tanggal')
-                ->orderByDesc('id')
-                ->get();
-        } catch (\Throwable $e) {
-            $data = collect();
-            $dbError = $e->getMessage();
-        }
-
-        $stok = $data
-            ->groupBy(fn (object $row): string => mb_strtolower(trim($row->nama_barang)))
-            ->map(function (Collection $mutasi): array {
-                $masuk = (int) $mutasi
-                    ->where('jenis_transaksi', 'masuk')
-                    ->sum('jumlah');
-                $keluar = (int) $mutasi
-                    ->where('jenis_transaksi', 'keluar')
-                    ->sum('jumlah');
-
-                return [
-                    'nama_barang' => $mutasi->first()->nama_barang,
-                    'masuk' => $masuk,
-                    'keluar' => $keluar,
-                    'stok' => $masuk - $keluar,
-                ];
-            })
-            ->sortBy('nama_barang', SORT_NATURAL | SORT_FLAG_CASE)
-            ->values();
-
-        $ringkasan = [
-            'jenis_barang' => $stok->count(),
-            'total_stok' => $stok->sum('stok'),
-            'total_masuk' => $data->where('jenis_transaksi', 'masuk')->sum('jumlah'),
-            'total_keluar' => $data->where('jenis_transaksi', 'keluar')->sum('jumlah'),
-        ];
-
-        return view('welcome', compact('data', 'stok', 'ringkasan', 'dbError'));
-    }
 
     public function store(Request $request): RedirectResponse
     {
