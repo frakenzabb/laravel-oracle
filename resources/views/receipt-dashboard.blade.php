@@ -177,7 +177,12 @@
                     <p class="mb-0 small text-secondary">Pilih PO yang tersedia untuk mencatat barang diterima</p>
                 </div>
             </div>
-            <span class="badge rounded-pill text-bg-light border px-3 py-2 text-secondary">PO aktif: {{ number_format($ringkasan['purchase_orders']) }}</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                <span class="badge rounded-pill text-bg-light border px-3 py-2 text-secondary">PO aktif: {{ number_format($ringkasan['purchase_orders']) }}</span>
+                <button class="btn btn-primary px-3" type="button" data-bs-toggle="modal" data-bs-target="#receiptModal">
+                    <span aria-hidden="true">+</span> Input Baru
+                </button>
+            </div>
         </header>
 
         @if($dbError)
@@ -318,6 +323,8 @@
             <div class="modal-content">
                 <form action="{{ route('penerimaan-barang.store') }}" method="POST" id="receiptForm">
                     @csrf
+                    <input type="hidden" name="tanggal_awal" value="{{ $tanggalAwal }}">
+                    <input type="hidden" name="tanggal_akhir" value="{{ $tanggalAkhir }}">
                     <div class="modal-header px-4 py-3">
                         <div>
                             <h2 class="modal-title fs-5 fw-bold" id="receiptModalTitle">Input Penerimaan Barang</h2>

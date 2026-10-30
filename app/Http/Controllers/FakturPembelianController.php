@@ -173,6 +173,8 @@ class FakturPembelianController extends Controller
             'no_sj' => ['nullable', 'string', 'max:50'],
             'tgl_sj' => ['required', 'date'],
             'keterangan' => ['nullable', 'string', 'max:255'],
+            'tanggal_awal' => ['nullable', 'date'],
+            'tanggal_akhir' => ['nullable', 'date', 'after_or_equal:tanggal_awal'],
             'items' => ['required', 'array', 'min:1', 'max:100'],
             'items.*.po_detail_id' => ['required', 'integer'],
             'items.*.qty' => ['required', 'numeric', 'min:0', 'max:999999999'],
@@ -340,7 +342,10 @@ class FakturPembelianController extends Controller
             }
         });
 
-        return redirect()->route('barang.index')
+        return redirect()->route('barang.index', array_filter([
+            'tanggal_awal' => $validated['tanggal_awal'] ?? null,
+            'tanggal_akhir' => $validated['tanggal_akhir'] ?? null,
+        ]))
             ->with('success', 'Penerimaan barang dari Purchase Order berhasil disimpan.');
     }
 

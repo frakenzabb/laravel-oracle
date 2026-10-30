@@ -85,11 +85,13 @@ class FakturPembelianTest extends TestCase
             ->assertSee('Total Baris Item')
             ->assertSee('Total Qty Diterima')
             ->assertSee('18.774')
+            ->assertSee('Input Baru')
+            ->assertSee('data-bs-target="#receiptModal"', false)
             ->assertSee('Qty Belum Diterima')
             ->assertSee('value="2026-10-01"', false)
             ->assertSee('value="2026-10-29"', false)
             ->assertSee('Pilih PO')
-            ->assertSee('tidak menyediakan pembuatan atau perubahan PO')
+            ->assertSee('Detail barang dimuat dari PO. Tidak ada barang yang dapat ditambahkan manual.')
             ->assertDontSee('Tambah PO');
     }
 
@@ -239,6 +241,8 @@ class FakturPembelianTest extends TestCase
         $this->post('/penerimaan-barang', [
             'po_id' => 20,
             'tanggal' => '2026-10-20',
+            'tanggal_awal' => '2026-10-01',
+            'tanggal_akhir' => '2026-10-29',
             'no_sj' => 'SJ-123',
             'tgl_sj' => '2026-10-21',
             'keterangan' => 'Penerimaan sebagian',
@@ -246,7 +250,10 @@ class FakturPembelianTest extends TestCase
                 ['po_detail_id' => 201, 'qty' => 2],
             ],
         ])
-            ->assertRedirect(route('barang.index'))
+            ->assertRedirect(route('barang.index', [
+                'tanggal_awal' => '2026-10-01',
+                'tanggal_akhir' => '2026-10-29',
+            ]))
             ->assertSessionHas('success', 'Penerimaan barang dari Purchase Order berhasil disimpan.');
     }
 
