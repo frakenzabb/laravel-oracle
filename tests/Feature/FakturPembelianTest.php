@@ -12,9 +12,28 @@ class FakturPembelianTest extends TestCase
     public function test_homepage_lists_existing_purchase_orders_with_remaining_items(): void
     {
         $receiptSummaryQuery = Mockery::mock();
+        $availableItemsQuery = Mockery::mock();
         $purchaseOrdersQuery = Mockery::mock();
         $linesQuery = $this->mockOpenLinesQuery();
         $connection = Mockery::mock(ConnectionInterface::class);
+
+        $availableItemsQuery->shouldReceive('leftJoin')->once()
+            ->with('m_satuan as unit', 'item.id_satuan', '=', 'unit.id')
+            ->andReturnSelf();
+        $availableItemsQuery->shouldReceive('select')->once()
+            ->with(Mockery::type('array'))->andReturnSelf();
+        $availableItemsQuery->shouldReceive('selectRaw')->twice()
+            ->with(Mockery::type('string'))->andReturnSelf();
+        $availableItemsQuery->shouldReceive('orderBy')->once()
+            ->with('item.nama_barang')->andReturnSelf();
+        $availableItemsQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'kode_barang' => 'BRG001',
+                'nama_barang' => 'Besi Hollow',
+                'unit' => 'Pcs',
+                'available_qty' => 23,
+            ],
+        ]));
 
         $receiptSummaryQuery->shouldReceive('leftJoin')->once()
             ->with('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi')
@@ -72,12 +91,18 @@ class FakturPembelianTest extends TestCase
         ]));
 
         $connection->shouldReceive('table')->with('gd_terima_beli_m as receipt')->andReturn($receiptSummaryQuery);
+        $connection->shouldReceive('table')->with('m_item as item')->andReturn($availableItemsQuery);
         $connection->shouldReceive('table')->with('pmb_purchorder_m as po')->andReturn($purchaseOrdersQuery);
         $connection->shouldReceive('table')->with('pmb_purchorder_d as pod')->andReturn($linesQuery);
         DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
 
         $this->get('/?tanggal_awal=2026-10-01&tanggal_akhir=2026-10-29')
             ->assertOk()
+            ->assertSee('Rekanan dengan PO Tersedia')
+            ->assertSee('Lihat PO')
+            ->assertSee('aria-label="Lihat PO dari CV Sumber Rejeki"', false)
+            ->assertSee('class="btn btn-sm btn-outline-primary view-supplier"', false)
+            ->assertSee('data-supplier-id="4"', false)
             ->assertSee('Purchase Order Tersedia')
             ->assertSee('PO-2026-0020')
             ->assertSee('CV Sumber Rejeki')
@@ -85,14 +110,222 @@ class FakturPembelianTest extends TestCase
             ->assertSee('Total Baris Item')
             ->assertSee('Total Qty Diterima')
             ->assertSee('18.774')
-            ->assertSee('Input Baru')
-            ->assertSee('data-bs-target="#receiptModal"', false)
+            ->assertSee('Dashboard')
+            ->assertSee('href="http://localhost"', false)
+            ->assertSee('Barang Masuk (Input)')
+            ->assertSee('/penerimaan-barang/input')
+            ->assertSee('#availableStockTable')
+            ->assertSee('Barang Tersedia')
             ->assertSee('Qty Belum Diterima')
             ->assertSee('value="2026-10-01"', false)
             ->assertSee('value="2026-10-29"', false)
-            ->assertSee('Pilih PO')
-            ->assertSee('Detail barang dimuat dari PO. Tidak ada barang yang dapat ditambahkan manual.')
+            ->assertSee('Input Penerimaan')
+            ->assertSee('penerimaan-barang/input?supplier_id=4')
+            ->assertSee('id="supplierModal"', false)
+            ->assertSee('id="supplierHistoryBody"', false)
+            ->assertDontSee('id="receiptModal"', false)
+            ->assertSee('Barang dan Stok Tersedia Saat Ini')
+            ->assertSee('Stok Tersedia')
+            ->assertSee('23')
             ->assertDontSee('Tambah PO');
+    }
+
+    public function test_homepage_shows_purchase_orders_from_all_dates_when_no_calendar_filter_is_selected(): void
+    {
+        $receiptSummaryQuery = Mockery::mock();
+        $availableItemsQuery = Mockery::mock();
+        $purchaseOrdersQuery = Mockery::mock();
+        $linesQuery = $this->mockOpenLinesQuery();
+        $connection = Mockery::mock(ConnectionInterface::class);
+
+        $receiptSummaryQuery->shouldReceive('leftJoin')->once()->andReturnSelf();
+        $receiptSummaryQuery->shouldNotReceive('whereBetween');
+        $receiptSummaryQuery->shouldReceive('selectRaw')->once()->andReturnSelf();
+        $receiptSummaryQuery->shouldReceive('first')->once()->andReturn((object) [
+            'transaction_count' => 0,
+            'item_count' => 0,
+            'received_qty' => 0,
+        ]);
+
+        $availableItemsQuery->shouldReceive('leftJoin')->once()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('select')->once()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('selectRaw')->twice()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('orderBy')->once()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('get')->once()->andReturn(collect());
+
+        $purchaseOrdersQuery->shouldReceive('join')->once()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('select')->once()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('whereExists')->once()->andReturnSelf();
+        $purchaseOrdersQuery->shouldNotReceive('whereBetween');
+        $purchaseOrdersQuery->shouldReceive('orderByDesc')->twice()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'id' => 21,
+                'no_transaksi' => 'PO-2020-0021',
+                'tanggal' => '2020-04-15',
+                'status' => '2',
+                'id_rekanan' => 5,
+                'nama_rekanan' => 'PT Mitra Abadi',
+                'kode_rekanan' => 'SPL005',
+            ],
+        ]));
+
+        $linesQuery->shouldReceive('whereIn')->once()->with('pod.id_transaksi', [21])->andReturnSelf();
+        $linesQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'po_id' => 21,
+                'po_detail_id' => 211,
+                'kode_barang' => 'BRG002',
+                'nama_barang' => 'Besi Beton',
+                'unit' => 'Batang',
+                'ordered_qty' => 10,
+                'received_qty' => 0,
+                'remaining_qty' => 10,
+            ],
+        ]));
+
+        $connection->shouldReceive('table')->with('gd_terima_beli_m as receipt')->andReturn($receiptSummaryQuery);
+        $connection->shouldReceive('table')->with('m_item as item')->andReturn($availableItemsQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_m as po')->andReturn($purchaseOrdersQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d as pod')->andReturn($linesQuery);
+        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
+
+        $this->get('/')
+            ->assertOk()
+            ->assertSee('PO dengan sisa barang dari semua periode.')
+            ->assertSee('PO-2020-0021')
+            ->assertSee('PT Mitra Abadi')
+            ->assertSee('id="tanggal_awal" name="tanggal_awal" value=""', false)
+            ->assertSee('id="tanggal_akhir" name="tanggal_akhir" value=""', false)
+            ->assertDontSee('tanggal_awal=');
+    }
+
+    public function test_receipt_input_is_a_page_and_prefills_the_selected_supplier_and_purchase_order(): void
+    {
+        $receiptSummaryQuery = Mockery::mock();
+        $availableItemsQuery = Mockery::mock();
+        $purchaseOrdersQuery = Mockery::mock();
+        $linesQuery = $this->mockOpenLinesQuery();
+        $connection = Mockery::mock(ConnectionInterface::class);
+
+        $receiptSummaryQuery->shouldReceive('leftJoin')->once()->andReturnSelf();
+        $receiptSummaryQuery->shouldReceive('selectRaw')->once()->andReturnSelf();
+        $receiptSummaryQuery->shouldReceive('first')->once()->andReturn((object) [
+            'transaction_count' => 0,
+            'item_count' => 0,
+            'received_qty' => 0,
+        ]);
+
+        $availableItemsQuery->shouldReceive('leftJoin')->once()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('select')->once()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('selectRaw')->twice()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('orderBy')->once()->andReturnSelf();
+        $availableItemsQuery->shouldReceive('get')->once()->andReturn(collect());
+
+        $purchaseOrdersQuery->shouldReceive('join')->once()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('select')->once()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('whereExists')->once()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('orderByDesc')->twice()->andReturnSelf();
+        $purchaseOrdersQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'id' => 20,
+                'no_transaksi' => 'PO-2026-0020',
+                'tanggal' => '2026-10-20',
+                'status' => '2',
+                'id_rekanan' => 4,
+                'nama_rekanan' => 'CV Sumber Rejeki',
+                'kode_rekanan' => 'SPL004',
+            ],
+        ]));
+
+        $linesQuery->shouldReceive('whereIn')->once()->with('pod.id_transaksi', [20])->andReturnSelf();
+        $linesQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'po_id' => 20,
+                'po_detail_id' => 201,
+                'kode_barang' => 'BRG001',
+                'nama_barang' => 'Besi Hollow',
+                'unit' => 'Pcs',
+                'ordered_qty' => 15,
+                'received_qty' => 5,
+                'remaining_qty' => 10,
+            ],
+        ]));
+
+        $connection->shouldReceive('table')->with('gd_terima_beli_m as receipt')->andReturn($receiptSummaryQuery);
+        $connection->shouldReceive('table')->with('m_item as item')->andReturn($availableItemsQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_m as po')->andReturn($purchaseOrdersQuery);
+        $connection->shouldReceive('table')->with('pmb_purchorder_d as pod')->andReturn($linesQuery);
+        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
+
+        $this->get('/penerimaan-barang/input?supplier_id=4&po_id=20')
+            ->assertOk()
+            ->assertSee('Dashboard')
+            ->assertSee('href="http://localhost"', false)
+            ->assertSee('Barang Masuk (Input)')
+            ->assertSee('action="'.route('penerimaan-barang.store').'"', false)
+            ->assertSee('name="supplier_id"', false)
+            ->assertSee('value="4" selected', false)
+            ->assertSee('initialPurchaseOrderId = "20"', false)
+            ->assertSee('id="poItemsBody"', false)
+            ->assertDontSee('modal-dialog');
+    }
+
+    public function test_supplier_receipt_history_endpoint_returns_supplier_items(): void
+    {
+        $historyQuery = Mockery::mock();
+        $connection = Mockery::mock(ConnectionInterface::class);
+
+        $historyQuery->shouldReceive('join')->once()
+            ->with('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi')
+            ->andReturnSelf();
+        $historyQuery->shouldReceive('leftJoin')->once()
+            ->with('pmb_purchorder_m as po', 'receipt.id_po', '=', 'po.id_transaksi')
+            ->andReturnSelf();
+        $historyQuery->shouldReceive('leftJoin')->once()
+            ->with('m_item as item', 'detail.id_barang', '=', 'item.id_barang')
+            ->andReturnSelf();
+        $historyQuery->shouldReceive('leftJoin')->once()
+            ->with('m_satuan as unit', 'detail.id_satuan2', '=', 'unit.id')
+            ->andReturnSelf();
+        $historyQuery->shouldReceive('select')->once()
+            ->with(Mockery::type('array'))->andReturnSelf();
+        $historyQuery->shouldReceive('selectRaw')->twice()
+            ->with(Mockery::type('string'))->andReturnSelf();
+        $historyQuery->shouldReceive('where')->once()
+            ->with('receipt.id_rekanan', 4)->andReturnSelf();
+        $historyQuery->shouldReceive('whereBetween')->once()
+            ->with('receipt.tgl_transaksi', Mockery::on(
+                fn (array $range): bool => $range[0]->format('Y-m-d H:i:s') === '2026-10-01 00:00:00'
+                    && $range[1]->format('Y-m-d H:i:s') === '2026-10-29 23:59:59'
+            ))
+            ->andReturnSelf();
+        $historyQuery->shouldReceive('orderByDesc')->twice()->andReturnSelf();
+        $historyQuery->shouldReceive('orderBy')->once()
+            ->with('detail.no_urut')->andReturnSelf();
+        $historyQuery->shouldReceive('get')->once()->andReturn(collect([
+            (object) [
+                'tanggal' => '2026-10-22',
+                'no_transaksi' => 'TB261000020',
+                'no_sj' => 'SJ-020',
+                'no_po' => 'PO-2026-0020',
+                'kode_barang' => 'BRG001',
+                'nama_barang' => 'Besi Hollow',
+                'received_qty' => 5,
+                'unit' => 'Pcs',
+            ],
+        ]));
+
+        $connection->shouldReceive('table')
+            ->once()->with('gd_terima_beli_m as receipt')->andReturn($historyQuery);
+        DB::shouldReceive('connection')->once()->with('oracle')->andReturn($connection);
+
+        $this->getJson('/suppliers/4/receipt-history?tanggal_awal=2026-10-01&tanggal_akhir=2026-10-29')
+            ->assertOk()
+            ->assertJsonPath('items.0.no_transaksi', 'TB261000020')
+            ->assertJsonPath('items.0.no_po', 'PO-2026-0020')
+            ->assertJsonPath('items.0.nama_barang', 'Besi Hollow')
+            ->assertJsonPath('items.0.received_qty', 5);
     }
 
     public function test_purchase_order_details_endpoint_returns_only_remaining_lines(): void

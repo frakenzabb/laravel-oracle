@@ -19,4 +19,8 @@ Aplikasi Laravel untuk mencatat transaksi barang masuk dan keluar, melihat stok 
 
 Halaman manajemen gudang tersedia di `/`. Transaksi keluar ditolak jika jumlahnya melebihi stok yang tersedia. Tes dapat dijalankan dengan `php artisan test`.
 
+Halaman `/barang-keluar` digunakan untuk mencatat bon barang keluar tanpa Purchase Order. Detail barang dipilih dari master barang, jumlah keluar divalidasi terhadap stok, lalu header dan detail disimpan menggunakan sequence `SEQ_GD_BON_KELUAR_M` dan `SEQ_GD_BON_KELUAR_D`.
+
+Di menu Barang Keluar tersedia panduan pengisian tanggal, divisi, keperluan, pemilihan beberapa barang, batas stok, dan proses penyimpanan bon.
+
 Halaman `/faktur-pembelian` digunakan untuk mencatat dan mencetak faktur pembelian. Setiap detail barang yang disimpan otomatis dicatat sebagai barang masuk. Faktur menyimpan kode, nama barang, satuan, dan jumlah tanpa informasi harga atau total.

@@ -16,9 +16,11 @@ class FakturPembelianController extends Controller
 {
     public function index(Request $request): View
     {
+        $inputMode = $request->routeIs('penerimaan-barang.input');
         $dbError = null;
         $purchaseOrders = collect();
         $suppliers = collect();
+        $availableItems = collect();
         $ringkasan = [
             'purchase_orders' => 0,
             'items' => 0,
@@ -27,22 +29,29 @@ class FakturPembelianController extends Controller
             'received_items' => 0,
             'received_qty' => 0,
         ];
-        $tanggalAwal = $request->query('tanggal_awal', now()->startOfMonth()->format('Y-m-d'));
-        $tanggalAkhir = $request->query('tanggal_akhir', now()->format('Y-m-d'));
-
-        $request->validate([
-            'tanggal_awal' => ['nullable', 'date'],
-            'tanggal_akhir' => ['nullable', 'date', 'after_or_equal:tanggal_awal'],
+        $filters = $request->validate([
+            'tanggal_awal' => ['nullable', 'required_with:tanggal_akhir', 'date'],
+            'tanggal_akhir' => ['nullable', 'required_with:tanggal_awal', 'date', 'after_or_equal:tanggal_awal'],
+            'supplier_id' => ['nullable', 'integer'],
+            'po_id' => ['nullable', 'integer'],
         ]);
+        $tanggalAwal = $filters['tanggal_awal'] ?? '';
+        $tanggalAkhir = $filters['tanggal_akhir'] ?? '';
+        $hasDateFilter = $tanggalAwal !== '' && $tanggalAkhir !== '';
+        $initialSupplierId = (string) ($filters['supplier_id'] ?? old('supplier_id', ''));
+        $initialPurchaseOrderId = (string) ($filters['po_id'] ?? old('po_id', ''));
 
         try {
             $connection = DB::connection('oracle');
-            $receiptSummary = $connection->table('gd_terima_beli_m as receipt')
-                ->leftJoin('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi')
-                ->whereBetween('receipt.tgl_transaksi', [
+            $receiptSummaryQuery = $connection->table('gd_terima_beli_m as receipt')
+                ->leftJoin('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi');
+            if ($hasDateFilter) {
+                $receiptSummaryQuery->whereBetween('receipt.tgl_transaksi', [
                     Carbon::parse($tanggalAwal)->startOfDay(),
                     Carbon::parse($tanggalAkhir)->endOfDay(),
-                ])
+                ]);
+            }
+            $receiptSummary = $receiptSummaryQuery
                 ->selectRaw('COUNT(DISTINCT receipt.id_transaksi) as transaction_count, COUNT(detail.id_detail) as item_count, NVL(SUM(detail.jumlah), 0) as received_qty')
                 ->first();
 
@@ -50,7 +59,18 @@ class FakturPembelianController extends Controller
             $ringkasan['received_items'] = (int) ($receiptSummary->item_count ?? 0);
             $ringkasan['received_qty'] = (float) ($receiptSummary->received_qty ?? 0);
 
-            $purchaseOrders = $connection->table('pmb_purchorder_m as po')
+            $availableItems = $connection->table('m_item as item')
+                ->leftJoin('m_satuan as unit', 'item.id_satuan', '=', 'unit.id')
+                ->select([
+                    'item.kode_barang',
+                    'item.nama_barang',
+                ])
+                ->selectRaw("NVL(unit.kode_satuan, NVL(unit.nama_satuan, '')) as unit")
+                ->selectRaw("(SELECT GREATEST(NVL(SUM(CASE WHEN movement.jenis_transaksi = 'masuk' THEN movement.jumlah ELSE -movement.jumlah END), 0), 0) FROM t_data_barang movement WHERE LOWER(movement.nama_barang) = LOWER(item.nama_barang)) as available_qty")
+                ->orderBy('item.nama_barang')
+                ->get();
+
+            $purchaseOrdersQuery = $connection->table('pmb_purchorder_m as po')
                 ->join('m_rekanan as r', 'po.id_rekanan', '=', 'r.id')
                 ->select([
                     'po.id_transaksi as id',
@@ -66,11 +86,14 @@ class FakturPembelianController extends Controller
                         ->from('pmb_purchorder_d as pod')
                         ->whereColumn('pod.id_transaksi', 'po.id_transaksi')
                         ->whereRaw('NVL(NULLIF(pod.jumlah2, 0), NVL(pod.jumlah, 0)) > NVL(pod.qty_bpb, 0)');
-                })
-                ->whereBetween('po.tgl_transaksi', [
+                });
+            if ($hasDateFilter) {
+                $purchaseOrdersQuery->whereBetween('po.tgl_transaksi', [
                     Carbon::parse($tanggalAwal)->startOfDay(),
                     Carbon::parse($tanggalAkhir)->endOfDay(),
-                ])
+                ]);
+            }
+            $purchaseOrders = $purchaseOrdersQuery
                 ->orderByDesc('po.tgl_transaksi')
                 ->orderByDesc('po.id_transaksi')
                 ->get();
@@ -92,11 +115,15 @@ class FakturPembelianController extends Controller
                 }
 
                 $suppliers = $purchaseOrders
-                    ->unique('id_rekanan')
-                    ->map(fn (object $order): array => [
-                        'id' => (string) $order->id_rekanan,
-                        'name' => $order->nama_rekanan,
+                    ->groupBy('id_rekanan')
+                    ->map(fn (Collection $orders): array => [
+                        'id' => (string) $orders->first()->id_rekanan,
+                        'name' => $orders->first()->nama_rekanan,
+                        'code' => $orders->first()->kode_rekanan,
+                        'purchase_orders' => $orders->count(),
+                        'qty_remaining' => $orders->sum('qty_remaining'),
                     ])
+                    ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
                     ->values();
 
                 $ringkasan = array_merge($ringkasan, [
@@ -115,17 +142,66 @@ class FakturPembelianController extends Controller
             'id' => (string) $purchaseOrder->id,
             'supplier_id' => (string) $purchaseOrder->id_rekanan,
             'number' => $purchaseOrder->no_transaksi,
+            'date' => $purchaseOrder->tanggal,
+            'item_count' => $purchaseOrder->item_count,
+            'qty_remaining' => $purchaseOrder->qty_remaining,
+            'received_lines' => $purchaseOrder->received_lines,
         ])->values();
 
-        return view('receipt-dashboard', compact(
+        return view($inputMode ? 'receipt-input' : 'receipt-dashboard', compact(
             'purchaseOrders',
             'purchaseOrderOptions',
             'suppliers',
+            'availableItems',
             'ringkasan',
             'tanggalAwal',
             'tanggalAkhir',
+            'initialSupplierId',
+            'initialPurchaseOrderId',
             'dbError'
         ));
+    }
+
+    public function supplierReceiptHistory(int $supplierId, Request $request): JsonResponse
+    {
+        $filters = $request->validate([
+            'tanggal_awal' => ['nullable', 'required_with:tanggal_akhir', 'date'],
+            'tanggal_akhir' => ['nullable', 'required_with:tanggal_awal', 'date', 'after_or_equal:tanggal_awal'],
+        ]);
+        $tanggalAwal = $filters['tanggal_awal'] ?? null;
+        $tanggalAkhir = $filters['tanggal_akhir'] ?? null;
+
+        $query = DB::connection('oracle')->table('gd_terima_beli_m as receipt')
+            ->join('gd_terima_beli_d as detail', 'receipt.id_transaksi', '=', 'detail.id_transaksi')
+            ->leftJoin('pmb_purchorder_m as po', 'receipt.id_po', '=', 'po.id_transaksi')
+            ->leftJoin('m_item as item', 'detail.id_barang', '=', 'item.id_barang')
+            ->leftJoin('m_satuan as unit', 'detail.id_satuan2', '=', 'unit.id')
+            ->select([
+                'receipt.tgl_transaksi as tanggal',
+                'receipt.no_transaksi',
+                'receipt.no_sj',
+                'po.no_transaksi as no_po',
+                'item.kode_barang',
+                'item.nama_barang',
+            ])
+            ->selectRaw('NVL(NULLIF(detail.jumlah2, 0), NVL(detail.jumlah, 0)) as received_qty')
+            ->selectRaw("NVL(unit.kode_satuan, NVL(unit.nama_satuan, '')) as unit")
+            ->where('receipt.id_rekanan', $supplierId);
+
+        if ($tanggalAwal !== null && $tanggalAkhir !== null) {
+            $query->whereBetween('receipt.tgl_transaksi', [
+                Carbon::parse($tanggalAwal)->startOfDay(),
+                Carbon::parse($tanggalAkhir)->endOfDay(),
+            ]);
+        }
+
+        $items = $query
+            ->orderByDesc('receipt.tgl_transaksi')
+            ->orderByDesc('receipt.id_transaksi')
+            ->orderBy('detail.no_urut')
+            ->get();
+
+        return response()->json(['items' => $items]);
     }
 
     public function purchaseOrderDetails(int $id): JsonResponse
@@ -175,6 +251,8 @@ class FakturPembelianController extends Controller
             'keterangan' => ['nullable', 'string', 'max:255'],
             'tanggal_awal' => ['nullable', 'date'],
             'tanggal_akhir' => ['nullable', 'date', 'after_or_equal:tanggal_awal'],
+            'supplier_id' => ['nullable', 'integer'],
+            'return_to_input' => ['nullable', 'boolean'],
             'items' => ['required', 'array', 'min:1', 'max:100'],
             'items.*.po_detail_id' => ['required', 'integer'],
             'items.*.qty' => ['required', 'numeric', 'min:0', 'max:999999999'],
@@ -342,10 +420,21 @@ class FakturPembelianController extends Controller
             }
         });
 
-        return redirect()->route('barang.index', array_filter([
+        $destination = ($validated['return_to_input'] ?? false)
+            ? 'penerimaan-barang.input'
+            : 'barang.index';
+        $redirectFilters = array_filter([
             'tanggal_awal' => $validated['tanggal_awal'] ?? null,
             'tanggal_akhir' => $validated['tanggal_akhir'] ?? null,
-        ]))
+        ]);
+        if ($destination === 'penerimaan-barang.input') {
+            $redirectFilters = array_merge($redirectFilters, [
+                'supplier_id' => $validated['supplier_id'] ?? null,
+                'po_id' => $validated['po_id'],
+            ]);
+        }
+
+        return redirect()->route($destination, $redirectFilters)
             ->with('success', 'Penerimaan barang dari Purchase Order berhasil disimpan.');
     }
 

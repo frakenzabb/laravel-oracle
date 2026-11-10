@@ -168,7 +168,9 @@
     </style>
 </head>
 <body>
-    <main class="container-fluid page-shell px-3 px-lg-4 py-3 py-lg-4">
+    <div class="app-layout">
+        @include('partials.sidebar', ['activePage' => 'receipt'])
+        <main class="container-fluid page-shell app-content px-3 px-lg-4 py-3 py-lg-4">
         <header class="page-banner d-flex justify-content-between align-items-center gap-3 p-3 p-md-4 mb-4">
             <div class="d-flex align-items-center gap-3">
                 <span class="brand-icon" aria-hidden="true">▣</span>
@@ -179,9 +181,6 @@
             </div>
             <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
                 <span class="badge rounded-pill text-bg-light border px-3 py-2 text-secondary">PO aktif: {{ number_format($ringkasan['purchase_orders']) }}</span>
-                <button class="btn btn-primary px-3" type="button" data-bs-toggle="modal" data-bs-target="#receiptModal">
-                    <span aria-hidden="true">+</span> Input Baru
-                </button>
             </div>
         </header>
 
@@ -231,14 +230,15 @@
         </section>
 
         <form action="{{ route('barang.index') }}" method="GET" class="surface date-filter p-3 p-md-4 mb-4">
+            <p class="section-subtitle mb-3">Kosongkan tanggal untuk menampilkan semua PO; pilih periode tanggal jika ingin membatasi pencarian.</p>
             <div class="row g-3 align-items-end">
                 <div class="col-sm-6 col-lg-3">
                     <label class="form-label small fw-semibold mb-1" for="tanggal_awal">Tanggal Awal</label>
-                    <input class="form-control" type="date" id="tanggal_awal" name="tanggal_awal" value="{{ $tanggalAwal }}" required>
+                    <input class="form-control" type="date" id="tanggal_awal" name="tanggal_awal" value="{{ $tanggalAwal }}">
                 </div>
                 <div class="col-sm-6 col-lg-3">
                     <label class="form-label small fw-semibold mb-1" for="tanggal_akhir">Tanggal Akhir</label>
-                    <input class="form-control" type="date" id="tanggal_akhir" name="tanggal_akhir" value="{{ $tanggalAkhir }}" required>
+                    <input class="form-control" type="date" id="tanggal_akhir" name="tanggal_akhir" value="{{ $tanggalAkhir }}">
                 </div>
                 <div class="col-12 col-lg-auto d-flex flex-wrap gap-2">
                     <button class="btn btn-primary px-3" type="submit"><span aria-hidden="true">⌕</span> Cari</button>
@@ -249,11 +249,70 @@
             </div>
         </form>
 
+        <section class="surface overflow-hidden mb-4" aria-labelledby="supplierListHeading">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-bottom p-3 p-md-4">
+                <div>
+                    <h2 class="section-title mb-1" id="supplierListHeading">Rekanan dengan PO Tersedia</h2>
+                    <p class="section-subtitle mb-0">Pilih rekanan untuk melihat PO yang masih memiliki barang belum diterima.</p>
+                </div>
+                <span class="badge rounded-pill text-bg-light border px-3 py-2 text-secondary">{{ number_format($suppliers->count()) }} rekanan</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Rekanan</th>
+                            <th>Kode</th>
+                            <th class="text-center">PO Tersedia</th>
+                            <th class="text-end">Qty Belum Diterima</th>
+                            <th class="text-end">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse($suppliers as $supplier)
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="supplier-avatar" aria-hidden="true">{{ mb_strtoupper(mb_substr($supplier['name'], 0, 1)) }}</span>
+                                        <span class="fw-semibold">{{ $supplier['name'] }}</span>
+                                    </div>
+                                </td>
+                                <td>{{ $supplier['code'] }}</td>
+                                <td class="text-center"><span class="quantity-pill">{{ number_format($supplier['purchase_orders']) }}</span></td>
+                                <td class="text-end fw-semibold">{{ number_format($supplier['qty_remaining'], 0, ',', '.') }}</td>
+                                <td class="text-end">
+                                    <button
+                                        type="button"
+                                        class="btn btn-sm btn-outline-primary view-supplier"
+                                        data-supplier-id="{{ $supplier['id'] }}"
+                                        data-supplier-name="{{ $supplier['name'] }}"
+                                        data-supplier-code="{{ $supplier['code'] }}"
+                                        aria-label="Lihat PO dari {{ $supplier['name'] }}"
+                                    >Lihat PO <span aria-hidden="true">→</span></button>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="5" class="empty-state text-center">
+                                    <div class="fw-semibold text-dark">Belum ada rekanan dengan PO tersedia.</div>
+                                    <div class="small mt-1">Coba ubah periode tanggal untuk melihat PO lainnya.</div>
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
         <section class="surface overflow-hidden">
             <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 border-bottom p-3 p-md-4">
                 <div>
                     <h2 class="section-title mb-1">Purchase Order Tersedia</h2>
-                    <p class="section-subtitle mb-0">PO dengan sisa barang pada periode {{ \Illuminate\Support\Carbon::parse($tanggalAwal)->format('d M Y') }} – {{ \Illuminate\Support\Carbon::parse($tanggalAkhir)->format('d M Y') }}.</p>
+                    @if($tanggalAwal && $tanggalAkhir)
+                        <p class="section-subtitle mb-0">PO dengan sisa barang pada periode {{ \Illuminate\Support\Carbon::parse($tanggalAwal)->format('d M Y') }} – {{ \Illuminate\Support\Carbon::parse($tanggalAkhir)->format('d M Y') }}.</p>
+                    @else
+                        <p class="section-subtitle mb-0">PO dengan sisa barang dari semua periode.</p>
+                    @endif
                 </div>
                 <div class="search-box">
                     <input type="search" id="poSearch" class="form-control" placeholder="Cari nomor PO atau rekanan..." aria-label="Cari Purchase Order">
@@ -296,12 +355,10 @@
                                     @endif
                                 </td>
                                 <td class="text-end">
-                                    <button
-                                        type="button"
-                                        class="btn btn-sm btn-primary receive-po"
-                                        data-po-id="{{ $purchaseOrder->id }}"
-                                        data-supplier-id="{{ $purchaseOrder->id_rekanan }}"
-                                    >Pilih PO <span aria-hidden="true">→</span></button>
+                                    <a
+                                        class="btn btn-sm btn-primary"
+                                        href="{{ route('penerimaan-barang.input', array_filter(['supplier_id' => $purchaseOrder->id_rekanan, 'po_id' => $purchaseOrder->id, 'tanggal_awal' => $tanggalAwal, 'tanggal_akhir' => $tanggalAkhir], fn ($value) => $value !== '')) }}"
+                                    >Input Penerimaan <span aria-hidden="true">→</span></a>
                                 </td>
                             </tr>
                         @empty
@@ -316,92 +373,105 @@
                 <div id="noSearchResults" class="empty-state text-center d-none">Tidak ada PO yang cocok dengan pencarian.</div>
             </div>
         </section>
-    </main>
 
-    <div class="modal fade" id="receiptModal" tabindex="-1" aria-labelledby="receiptModalTitle" aria-hidden="true">
+        <section class="surface overflow-hidden mt-4" aria-label="Stok barang tersedia saat ini">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-bottom p-3 p-md-4">
+                <div>
+                    <h2 class="section-title mb-1">Barang dan Stok Tersedia Saat Ini</h2>
+                    <p class="section-subtitle mb-0">Stok dihitung dari seluruh transaksi barang masuk dan keluar.</p>
+                </div>
+                <span class="badge rounded-pill text-bg-light border text-secondary">{{ number_format($availableItems->count()) }} barang</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0" id="availableStockTable">
+                    <thead>
+                        <tr>
+                            <th>Kode Barang</th>
+                            <th>Nama Barang</th>
+                            <th>Satuan</th>
+                            <th class="text-end">Stok Tersedia</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse($availableItems as $item)
+                            <tr>
+                                <td class="po-number">{{ $item->kode_barang ?: '—' }}</td>
+                                <td class="fw-semibold">{{ $item->nama_barang }}</td>
+                                <td>{{ $item->unit ?: '—' }}</td>
+                                <td class="text-end fw-semibold">{{ number_format((float) $item->available_qty, 0, ',', '.') }}</td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="4" class="empty-state text-center">Data barang belum tersedia.</td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        </main>
+    </div>
+
+    <div class="modal fade" id="supplierModal" tabindex="-1" aria-labelledby="supplierModalTitle" aria-hidden="true">
         <div class="modal-dialog modal-xl modal-dialog-scrollable">
             <div class="modal-content">
-                <form action="{{ route('penerimaan-barang.store') }}" method="POST" id="receiptForm">
-                    @csrf
-                    <input type="hidden" name="tanggal_awal" value="{{ $tanggalAwal }}">
-                    <input type="hidden" name="tanggal_akhir" value="{{ $tanggalAkhir }}">
-                    <div class="modal-header px-4 py-3">
-                        <div>
-                            <h2 class="modal-title fs-5 fw-bold" id="receiptModalTitle">Input Penerimaan Barang</h2>
-                            <p class="small text-secondary mb-0">Detail barang dimuat dari PO. Tidak ada barang yang dapat ditambahkan manual.</p>
-                        </div>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+                <div class="modal-header px-4 py-3">
+                    <div>
+                        <h2 class="modal-title fs-5 fw-bold" id="supplierModalTitle">Purchase Order Rekanan</h2>
+                        <p class="small text-secondary mb-0" id="supplierModalSubtitle"></p>
                     </div>
-                    <div class="modal-body p-3 p-md-4">
-                        <div id="formMessage" class="alert alert-danger d-none" role="alert"></div>
-                        <div class="row g-3 mb-4">
-                            <div class="col-md-4">
-                                <label class="form-label small fw-semibold" for="tanggal">Tanggal Transaksi <span class="text-danger">*</span></label>
-                                <input id="tanggal" name="tanggal" type="date" class="form-control" value="{{ old('tanggal', now()->format('Y-m-d')) }}" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label small fw-semibold" for="no_sj">No. Surat Jalan</label>
-                                <input id="no_sj" name="no_sj" class="form-control" maxlength="50" value="{{ old('no_sj', '-') }}" placeholder="Nomor surat jalan (opsional)">
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label small fw-semibold" for="tgl_sj">Tanggal Surat Jalan <span class="text-danger">*</span></label>
-                                <input id="tgl_sj" name="tgl_sj" type="date" class="form-control" value="{{ old('tgl_sj', now()->format('Y-m-d')) }}" required>
-                            </div>
-                            <div class="col-md-5">
-                                <label class="form-label small fw-semibold" for="supplierSelect">Rekanan <span class="text-danger">*</span></label>
-                                <select id="supplierSelect" class="form-select" required>
-                                    <option value="">-- Pilih Rekanan --</option>
-                                    @foreach($suppliers as $supplier)
-                                        <option value="{{ $supplier['id'] }}">{{ $supplier['name'] }}</option>
-                                    @endforeach
-                                </select>
-                            </div>
-                            <div class="col-md-7">
-                                <label class="form-label small fw-semibold" for="purchaseOrderSelect">No. PO <span class="text-danger">*</span></label>
-                                <select id="purchaseOrderSelect" name="po_id" class="form-select" required disabled>
-                                    <option value="">-- Pilih rekanan terlebih dahulu --</option>
-                                </select>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label small fw-semibold" for="keterangan">Keterangan <span class="text-secondary fw-normal">(opsional)</span></label>
-                                <input id="keterangan" name="keterangan" class="form-control" maxlength="255" value="{{ old('keterangan') }}" placeholder="Catatan penerimaan barang">
-                            </div>
-                        </div>
-
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+                </div>
+                <div class="modal-body p-3 p-md-4">
+                    <section class="mb-4" aria-labelledby="supplierOrdersHeading">
                         <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
-                            <div>
-                                <h3 class="h6 fw-bold mb-1">Detail Barang PO</h3>
-                                <p class="small text-secondary mb-0">Qty terima otomatis mengikuti sisa PO; ubah untuk penerimaan sebagian atau hapus baris yang tidak diterima.</p>
-                            </div>
-                            <span class="badge rounded-pill text-bg-light border text-secondary text-nowrap"><span id="itemCount">0</span> baris</span>
+                            <h3 class="h6 fw-bold mb-0" id="supplierOrdersHeading">PO Belum Selesai</h3>
+                            <span class="badge rounded-pill text-bg-light border text-secondary"><span id="supplierOrderCount">0</span> PO</span>
                         </div>
                         <div class="table-responsive border rounded-3">
-                            <table class="table table-hover detail-table align-middle mb-0">
+                            <table class="table table-hover align-middle mb-0">
                                 <thead>
                                     <tr>
-                                        <th style="width: 55px">No</th>
-                                        <th>Kode</th>
-                                        <th>Nama Barang</th>
-                                        <th class="text-end">Qty PO</th>
-                                        <th style="width: 155px">Qty Terima</th>
-                                        <th>Satuan</th>
+                                        <th>No. PO</th>
+                                        <th>Tanggal</th>
+                                        <th class="text-center">Baris Tersisa</th>
+                                        <th class="text-end">Qty Belum Diterima</th>
                                         <th class="text-end">Aksi</th>
                                     </tr>
                                 </thead>
-                                <tbody id="poItemsBody">
-                                    <tr><td colspan="7" class="text-center text-secondary py-5">Pilih rekanan lalu No. PO untuk memuat detail barang.</td></tr>
-                                </tbody>
+                                <tbody id="supplierOrdersBody"></tbody>
                             </table>
                         </div>
-                    </div>
-                    <div class="modal-footer d-flex justify-content-between px-3 px-md-4">
-                        <span class="small text-secondary d-none d-md-inline">Barang yang tidak diterima dapat dihapus menggunakan tombol hapus.</span>
-                        <div class="d-flex gap-2 ms-auto">
-                            <button type="reset" class="btn btn-outline-secondary" id="resetForm">Reset</button>
-                            <button type="submit" class="btn btn-primary px-4" id="saveReceipt" disabled>Simpan Penerimaan</button>
+                    </section>
+
+                    <section aria-labelledby="supplierHistoryHeading">
+                        <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+                            <div>
+                                <h3 class="h6 fw-bold mb-1" id="supplierHistoryHeading">Barang yang Sudah Diterima</h3>
+                                <p class="small text-secondary mb-0" id="supplierHistoryPeriod"></p>
+                            </div>
+                            <span class="badge rounded-pill text-bg-light border text-secondary"><span id="supplierHistoryCount">0</span> baris</span>
                         </div>
-                    </div>
-                </form>
+                        <div id="supplierHistoryMessage" class="alert alert-warning d-none" role="alert"></div>
+                        <div class="table-responsive border rounded-3">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Tanggal Terima</th>
+                                        <th>No. Penerimaan</th>
+                                        <th>No. Surat Jalan</th>
+                                        <th>No. PO</th>
+                                        <th>Kode Barang</th>
+                                        <th>Nama Barang</th>
+                                        <th class="text-end">Qty Diterima</th>
+                                        <th>Satuan</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="supplierHistoryBody"></tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
             </div>
         </div>
     </div>
@@ -409,40 +479,123 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const purchaseOrders = @json($purchaseOrderOptions);
-        const oldReceiptItems = @json(old('items', []));
-        const supplierSelect = document.getElementById('supplierSelect');
-        const purchaseOrderSelect = document.getElementById('purchaseOrderSelect');
-        const poItemsBody = document.getElementById('poItemsBody');
-        const itemCount = document.getElementById('itemCount');
-        const saveReceipt = document.getElementById('saveReceipt');
-        const formMessage = document.getElementById('formMessage');
+        const supplierModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('supplierModal'));
+        const supplierOrdersBody = document.getElementById('supplierOrdersBody');
+        const supplierHistoryBody = document.getElementById('supplierHistoryBody');
+        const supplierHistoryMessage = document.getElementById('supplierHistoryMessage');
         const startDate = document.getElementById('tanggal_awal');
         const endDate = document.getElementById('tanggal_akhir');
-        let lineIndex = 0;
-        let loadSequence = 0;
-        let restoreOldItems = true;
-
-        function showFormMessage(message) {
-            formMessage.textContent = message;
-            formMessage.classList.remove('d-none');
-        }
-
-        function hideFormMessage() {
-            formMessage.textContent = '';
-            formMessage.classList.add('d-none');
-        }
+        let supplierHistorySequence = 0;
 
         function formatQty(value) {
             return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 }).format(Number(value || 0));
         }
 
-        function updateLinesState() {
-            const rows = [...poItemsBody.querySelectorAll('.po-item-row')];
-            rows.forEach((row, index) => {
-                row.querySelector('.row-number').textContent = index + 1;
+        function formatDate(value) {
+            if (!value) return '—';
+            const [year, month, day] = String(value).slice(0, 10).split('-').map(Number);
+            if (!year || !month || !day) return '—';
+            return new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+                .format(new Date(year, month - 1, day));
+        }
+
+        function appendEmptyRow(body, columns, message) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = columns;
+            cell.className = 'empty-state text-center';
+            cell.textContent = message;
+            row.append(cell);
+            body.replaceChildren(row);
+        }
+
+        async function openSupplierModal(supplierId, supplierName, supplierCode) {
+            document.getElementById('supplierModalTitle').textContent = supplierName;
+            document.getElementById('supplierModalSubtitle').textContent = supplierCode || 'Daftar PO dan riwayat barang diterima';
+            document.getElementById('supplierHistoryPeriod').textContent = startDate.value && endDate.value
+                ? `Riwayat periode ${formatDate(startDate.value)} – ${formatDate(endDate.value)}`
+                : 'Riwayat dari semua periode';
+
+            const supplierOrders = purchaseOrders.filter((po) => po.supplier_id === supplierId);
+            document.getElementById('supplierOrderCount').textContent = supplierOrders.length;
+            supplierOrdersBody.replaceChildren();
+
+            supplierOrders.forEach((order) => {
+                const row = document.createElement('tr');
+                const number = document.createElement('td');
+                number.className = 'po-number';
+                number.textContent = order.number || `PO #${order.id}`;
+                row.append(number);
+                row.append(makeCell(formatDate(order.date)));
+                row.append(makeCell(formatQty(order.item_count), 'text-center'));
+                row.append(makeCell(formatQty(order.qty_remaining), 'text-end fw-semibold'));
+
+                const actionCell = document.createElement('td');
+                actionCell.className = 'text-end';
+                const action = document.createElement('a');
+                action.className = 'btn btn-sm btn-primary';
+                const inputUrl = new URL(@json(route('penerimaan-barang.input')), window.location.origin);
+                inputUrl.searchParams.set('supplier_id', supplierId);
+                inputUrl.searchParams.set('po_id', order.id);
+                if (startDate.value && endDate.value) {
+                    inputUrl.searchParams.set('tanggal_awal', startDate.value);
+                    inputUrl.searchParams.set('tanggal_akhir', endDate.value);
+                }
+                action.href = inputUrl.toString();
+                action.textContent = 'Input Penerimaan';
+                actionCell.append(action);
+                row.append(actionCell);
+                supplierOrdersBody.append(row);
             });
-            itemCount.textContent = rows.length;
-            saveReceipt.disabled = rows.length === 0;
+            if (supplierOrders.length === 0) {
+                appendEmptyRow(supplierOrdersBody, 5, 'Tidak ada PO terbuka untuk rekanan ini.');
+            }
+
+            supplierHistoryMessage.classList.add('d-none');
+            supplierHistoryBody.innerHTML = '<tr><td colspan="8" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Memuat riwayat penerimaan...</td></tr>';
+            document.getElementById('supplierHistoryCount').textContent = '…';
+            supplierModal.show();
+
+            const sequence = ++supplierHistorySequence;
+            try {
+                const url = new URL(
+                    @json(route('suppliers.receipt-history', ['supplierId' => '__SUPPLIER_ID__']))
+                        .replace('__SUPPLIER_ID__', encodeURIComponent(supplierId)),
+                    window.location.origin
+                );
+                if (startDate.value && endDate.value) {
+                    url.searchParams.set('tanggal_awal', startDate.value);
+                    url.searchParams.set('tanggal_akhir', endDate.value);
+                }
+                const response = await fetch(url, { headers: { Accept: 'application/json' } });
+                if (!response.ok) throw new Error('Riwayat penerimaan gagal dimuat.');
+                const result = await response.json();
+                if (sequence !== supplierHistorySequence) return;
+
+                document.getElementById('supplierHistoryCount').textContent = result.items.length;
+                supplierHistoryBody.replaceChildren();
+                result.items.forEach((item) => {
+                    const row = document.createElement('tr');
+                    row.append(makeCell(formatDate(item.tanggal)));
+                    row.append(makeCell(item.no_transaksi || '—', 'po-number'));
+                    row.append(makeCell(item.no_sj || '—'));
+                    row.append(makeCell(item.no_po || '—'));
+                    row.append(makeCell(item.kode_barang || '—'));
+                    row.append(makeCell(item.nama_barang || 'Barang tidak diketahui', 'fw-semibold'));
+                    row.append(makeCell(formatQty(item.received_qty), 'text-end fw-semibold'));
+                    row.append(makeCell(item.unit || '—'));
+                    supplierHistoryBody.append(row);
+                });
+                if (result.items.length === 0) {
+                    appendEmptyRow(supplierHistoryBody, 8, 'Belum ada barang yang diterima dari rekanan ini.');
+                }
+            } catch (error) {
+                if (sequence !== supplierHistorySequence) return;
+                document.getElementById('supplierHistoryCount').textContent = '0';
+                appendEmptyRow(supplierHistoryBody, 8, 'Riwayat penerimaan tidak tersedia.');
+                supplierHistoryMessage.textContent = error.message || 'Terjadi kesalahan saat memuat riwayat penerimaan.';
+                supplierHistoryMessage.classList.remove('d-none');
+            }
         }
 
         function makeCell(text, className = '') {
@@ -452,152 +605,13 @@
             return cell;
         }
 
-        function renderLines(lines) {
-            poItemsBody.replaceChildren();
-            lineIndex = 0;
-            lines.forEach((line) => {
-                const row = document.createElement('tr');
-                row.className = 'po-item-row';
-                row.dataset.remaining = line.remaining_qty;
-                row.append(makeCell('', 'row-number text-secondary'));
-                row.append(makeCell(line.kode_barang || '—', 'small text-secondary'));
-
-                const nameCell = makeCell(line.nama_barang || 'Barang tanpa nama');
-                nameCell.classList.add('fw-semibold');
-                row.append(nameCell);
-                row.append(makeCell(`${formatQty(line.ordered_qty)} (sisa ${formatQty(line.remaining_qty)})`, 'text-end text-nowrap'));
-
-                const qtyCell = document.createElement('td');
-                const qtyInput = document.createElement('input');
-                qtyInput.type = 'number';
-                qtyInput.name = `items[${lineIndex}][qty]`;
-                qtyInput.className = 'form-control form-control-sm receive-qty';
-                qtyInput.min = '0';
-                qtyInput.max = line.remaining_qty;
-                qtyInput.step = 'any';
-                const oldItem = restoreOldItems
-                    ? oldReceiptItems.find((item) => String(item.po_detail_id) === String(line.po_detail_id))
-                    : null;
-                qtyInput.value = oldItem?.qty ?? line.remaining_qty;
-                qtyInput.required = true;
-                qtyInput.setAttribute('aria-label', `Jumlah diterima untuk ${line.nama_barang || 'barang'}`);
-                qtyCell.append(qtyInput);
-
-                const detailInput = document.createElement('input');
-                detailInput.type = 'hidden';
-                detailInput.name = `items[${lineIndex}][po_detail_id]`;
-                detailInput.value = line.po_detail_id;
-                qtyCell.append(detailInput);
-                row.append(qtyCell);
-                row.append(makeCell(line.unit || '—'));
-
-                const actionCell = document.createElement('td');
-                actionCell.className = 'text-end';
-                const removeButton = document.createElement('button');
-                removeButton.type = 'button';
-                removeButton.className = 'btn btn-sm btn-outline-danger remove-line';
-                removeButton.textContent = 'Hapus';
-                removeButton.setAttribute('aria-label', `Hapus ${line.nama_barang || 'barang'} dari penerimaan`);
-                actionCell.append(removeButton);
-                row.append(actionCell);
-                poItemsBody.append(row);
-                lineIndex += 1;
-            });
-
-            if (lines.length === 0) {
-                poItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary py-5">Tidak ada barang yang tersisa untuk diterima pada PO ini.</td></tr>';
-            }
-            restoreOldItems = false;
-            updateLinesState();
-        }
-
-        async function loadPurchaseOrder(id) {
-            const sequence = ++loadSequence;
-            hideFormMessage();
-            saveReceipt.disabled = true;
-            poItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary py-5"><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Memuat detail PO...</td></tr>';
-            itemCount.textContent = '…';
-
-            try {
-                const url = @json(route('purchase-orders.details', ['id' => '__PO_ID__'])).replace('__PO_ID__', encodeURIComponent(id));
-                const response = await fetch(url, { headers: { Accept: 'application/json' } });
-                if (!response.ok) throw new Error(response.status === 404 ? 'PO tidak ditemukan atau sudah tidak memiliki sisa barang.' : 'Detail PO gagal dimuat.');
-                const purchaseOrder = await response.json();
-                if (sequence !== loadSequence) return;
-                renderLines(purchaseOrder.items);
-            } catch (error) {
-                if (sequence !== loadSequence) return;
-                poItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary py-5">Detail barang tidak tersedia.</td></tr>';
-                itemCount.textContent = '0';
-                showFormMessage(error.message || 'Terjadi kesalahan saat memuat detail PO.');
-            }
-        }
-
-        function updatePurchaseOrderOptions(selectedId = '') {
-            const supplierId = supplierSelect.value;
-            const supplierOrders = purchaseOrders.filter((po) => po.supplier_id === supplierId);
-            purchaseOrderSelect.replaceChildren();
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = supplierId ? '-- Pilih No. PO --' : '-- Pilih rekanan terlebih dahulu --';
-            purchaseOrderSelect.append(placeholder);
-
-            supplierOrders.forEach((po) => {
-                const option = document.createElement('option');
-                option.value = po.id;
-                option.textContent = po.number || `PO #${po.id}`;
-                option.selected = po.id === String(selectedId);
-                purchaseOrderSelect.append(option);
-            });
-            purchaseOrderSelect.disabled = supplierOrders.length === 0;
-            if (selectedId && supplierOrders.some((po) => po.id === String(selectedId))) {
-                purchaseOrderSelect.value = String(selectedId);
-            }
-        }
-
-        supplierSelect.addEventListener('change', () => {
-            updatePurchaseOrderOptions();
-            loadSequence += 1;
-            hideFormMessage();
-            poItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary py-5">Pilih No. PO untuk memuat detail barang.</td></tr>';
-            itemCount.textContent = '0';
-            saveReceipt.disabled = true;
-        });
-
-        purchaseOrderSelect.addEventListener('change', () => {
-            if (purchaseOrderSelect.value) loadPurchaseOrder(purchaseOrderSelect.value);
-            else {
-                loadSequence += 1;
-                poItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary py-5">Pilih No. PO untuk memuat detail barang.</td></tr>';
-                updateLinesState();
-            }
-        });
-
-        document.getElementById('receiptForm').addEventListener('reset', () => {
-            window.setTimeout(() => {
-                loadSequence += 1;
-                supplierSelect.value = '';
-                updatePurchaseOrderOptions();
-                poItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary py-5">Pilih rekanan lalu No. PO untuk memuat detail barang.</td></tr>';
-                itemCount.textContent = '0';
-                saveReceipt.disabled = true;
-                hideFormMessage();
-            });
-        });
-
-        poItemsBody.addEventListener('click', (event) => {
-            const button = event.target.closest('.remove-line');
-            if (!button) return;
-            button.closest('.po-item-row').remove();
-            updateLinesState();
-        });
-
-        document.querySelectorAll('.receive-po').forEach((button) => {
+        document.querySelectorAll('.view-supplier').forEach((button) => {
             button.addEventListener('click', () => {
-                supplierSelect.value = button.dataset.supplierId;
-                updatePurchaseOrderOptions(button.dataset.poId);
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('receiptModal')).show();
-                loadPurchaseOrder(button.dataset.poId);
+                openSupplierModal(
+                    button.dataset.supplierId,
+                    button.dataset.supplierName,
+                    button.dataset.supplierCode
+                );
             });
         });
 
@@ -626,32 +640,6 @@
             startDate.form.requestSubmit();
         });
 
-        document.getElementById('receiptForm').addEventListener('submit', (event) => {
-            const invalidQty = [...poItemsBody.querySelectorAll('.receive-qty')].some((input) => {
-                const value = Number(input.value);
-                return !Number.isFinite(value) || value < 0 || value > Number(input.max);
-            });
-            const hasReceivedQty = [...poItemsBody.querySelectorAll('.receive-qty')].some((input) => Number(input.value) > 0);
-
-            if (!purchaseOrderSelect.value || invalidQty || !hasReceivedQty) {
-                event.preventDefault();
-                showFormMessage(!purchaseOrderSelect.value
-                    ? 'Pilih No. PO terlebih dahulu.'
-                    : invalidQty
-                        ? 'Jumlah terima harus valid dan tidak boleh melebihi sisa PO.'
-                        : 'Isi jumlah terima lebih dari 0 pada minimal satu barang.');
-            }
-        });
-
-        @if($errors->any() && old('po_id'))
-            const previousPurchaseOrder = purchaseOrders.find((po) => po.id === '{{ old('po_id') }}');
-            if (previousPurchaseOrder) {
-                supplierSelect.value = previousPurchaseOrder.supplier_id;
-                updatePurchaseOrderOptions(previousPurchaseOrder.id);
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('receiptModal')).show();
-                loadPurchaseOrder(previousPurchaseOrder.id);
-            }
-        @endif
     </script>
 </body>
 </html>
